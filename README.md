@@ -41,6 +41,8 @@ CoE-RagPipeline/
 │   └── correlation_analyzer.py # 연관도 분석
 ├── utils/                  # 유틸리티 함수들
 └── output/                 # 분석 결과 저장 디렉토리
+├── services/               # 서비스 계층 (Embedding 등)
+└── chroma_db/              # ChromaDB 벡터 저장소
 ```
 
 ## 🔧 API 엔드포인트

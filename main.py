@@ -5,7 +5,7 @@ import os
 import socket
 import uuid
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from models.schemas import (
 )
 from analyzers.git_analyzer import GitAnalyzer
 from analyzers.ast_analyzer import ASTAnalyzer
+from services.embedding_service import EmbeddingService
 
 # 로깅 설정
 logging.basicConfig(
@@ -179,6 +180,32 @@ async def list_analysis_results():
     ]
 
 
+@app.post("/search", response_model=List[dict])
+async def search_embeddings(query: str, k: int = 5, filter_metadata: Optional[Dict] = None):
+    """Chroma 벡터 데이터베이스에서 유사한 문서 검색"""
+    try:
+        chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
+        embedding_service = EmbeddingService(chroma_persist_directory=chroma_persist_dir)
+        results = embedding_service.search_similar_documents(query, k=k, filter_metadata=filter_metadata)
+        return results
+    except Exception as e:
+        logger.error(f"Failed to search embeddings: {e}")
+        raise HTTPException(status_code=500, detail=f"검색 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.get("/embeddings/stats", response_model=dict)
+async def get_embedding_stats():
+    """Chroma 벡터 데이터베이스 통계 정보 조회"""
+    try:
+        chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
+        embedding_service = EmbeddingService(chroma_persist_directory=chroma_persist_dir)
+        stats = embedding_service.get_collection_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get embedding stats: {e}")
+        raise HTTPException(status_code=500, detail=f"통계 조회 중 오류가 발생했습니다: {str(e)}")
+
+
 async def perform_analysis(analysis_id: str, request: AnalysisRequest):
     """실제 분석 수행 (백그라운드 태스크)"""
     try:
@@ -266,6 +293,15 @@ async def perform_analysis(analysis_id: str, request: AnalysisRequest):
             save_analysis_to_db(analysis_results[analysis_id])
         except Exception as db_error:
             logger.error(f"Failed to save analysis {analysis_id} to database: {db_error}")
+        
+        # 분석 결과를 embedding하여 Chroma에 저장
+        try:
+            chroma_persist_dir = os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
+            embedding_service = EmbeddingService(chroma_persist_directory=chroma_persist_dir)
+            embedding_result = embedding_service.process_analysis_result(analysis_results[analysis_id])
+            logger.info(f"Embedding result for analysis {analysis_id}: {embedding_result}")
+        except Exception as embedding_error:
+            logger.error(f"Failed to embed analysis {analysis_id}: {embedding_error}")
         
         # 정리
         git_analyzer.cleanup()
