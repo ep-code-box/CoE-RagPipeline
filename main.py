@@ -1,0 +1,351 @@
+import asyncio
+import logging
+import uuid
+from datetime import datetime
+from typing import Dict, List
+import uvicorn
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+
+from models.schemas import (
+    AnalysisRequest, 
+    AnalysisResult, 
+    AnalysisStatus, 
+    HealthResponse,
+    RepositoryAnalysis,
+    CorrelationAnalysis,
+    CodeMetrics,
+    TechSpec
+)
+from analyzers.git_analyzer import GitAnalyzer
+from analyzers.ast_analyzer import ASTAnalyzer
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# FastAPI 앱 초기화
+app = FastAPI(
+    title="CoE RAG Pipeline",
+    description="Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석, 기술스펙 정적 분석을 수행하는 RAG 파이프라인",
+    version="1.0.0"
+)
+
+# CORS 미들웨어 추가
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 분석 결과 저장소 (실제 운영에서는 데이터베이스 사용)
+analysis_results: Dict[str, AnalysisResult] = {}
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """서비스 상태 확인"""
+    return HealthResponse(status="healthy", timestamp=datetime.now())
+
+
+@app.post("/analyze", response_model=dict)
+async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks):
+    """Git 주소 목록을 받아 전체 분석 수행"""
+    # 분석 ID 생성
+    analysis_id = request.analysis_id or str(uuid.uuid4())
+    
+    # 분석 결과 초기화
+    analysis_result = AnalysisResult(
+        analysis_id=analysis_id,
+        status=AnalysisStatus.PENDING,
+        created_at=datetime.now(),
+        repositories=[],
+        correlation_analysis=None
+    )
+    
+    analysis_results[analysis_id] = analysis_result
+    
+    # 백그라운드에서 분석 실행
+    background_tasks.add_task(perform_analysis, analysis_id, request)
+    
+    return {
+        "analysis_id": analysis_id,
+        "status": "started",
+        "message": "분석이 시작되었습니다. /results/{analysis_id} 엔드포인트로 결과를 확인하세요."
+    }
+
+
+@app.get("/results/{analysis_id}", response_model=AnalysisResult)
+async def get_analysis_result(analysis_id: str):
+    """분석 결과 조회"""
+    if analysis_id not in analysis_results:
+        raise HTTPException(status_code=404, detail="분석 결과를 찾을 수 없습니다.")
+    
+    return analysis_results[analysis_id]
+
+
+@app.get("/results", response_model=List[dict])
+async def list_analysis_results():
+    """모든 분석 결과 목록 조회"""
+    return [
+        {
+            "analysis_id": result.analysis_id,
+            "status": result.status,
+            "created_at": result.created_at,
+            "completed_at": result.completed_at,
+            "repository_count": len(result.repositories)
+        }
+        for result in analysis_results.values()
+    ]
+
+
+async def perform_analysis(analysis_id: str, request: AnalysisRequest):
+    """실제 분석 수행 (백그라운드 태스크)"""
+    try:
+        # 분석 상태 업데이트
+        analysis_results[analysis_id].status = AnalysisStatus.RUNNING
+        logger.info(f"Starting analysis {analysis_id} for {len(request.repositories)} repositories")
+        
+        # Git 분석기 초기화
+        git_analyzer = GitAnalyzer()
+        ast_analyzer = ASTAnalyzer()
+        
+        repository_analyses = []
+        
+        # 각 레포지토리 분석
+        for repo in request.repositories:
+            try:
+                logger.info(f"Analyzing repository: {repo.url}")
+                
+                # 1. Git 클론
+                clone_path = git_analyzer.clone_repository(repo)
+                
+                # 2. 파일 구조 분석
+                files = git_analyzer.analyze_repository_structure(clone_path)
+                
+                # 3. AST 분석 (옵션)
+                ast_analysis = {}
+                if request.include_ast:
+                    ast_analysis = ast_analyzer.analyze_files(clone_path, files)
+                
+                # 4. 기술스펙 분석 (옵션)
+                tech_specs = []
+                if request.include_tech_spec:
+                    tech_specs = analyze_tech_specs(clone_path, files)
+                
+                # 5. 코드 메트릭 계산
+                code_metrics = calculate_code_metrics(files)
+                
+                # 6. 문서 파일 찾기
+                doc_files = find_documentation_files(files)
+                config_files = find_config_files(files)
+                
+                # 레포지토리 분석 결과 생성
+                repo_analysis = RepositoryAnalysis(
+                    repository=repo,
+                    clone_path=clone_path,
+                    files=files,
+                    ast_analysis=ast_analysis,
+                    tech_specs=tech_specs,
+                    code_metrics=code_metrics,
+                    documentation_files=doc_files,
+                    config_files=config_files
+                )
+                
+                repository_analyses.append(repo_analysis)
+                logger.info(f"Completed analysis for repository: {repo.url}")
+                
+            except Exception as e:
+                logger.error(f"Failed to analyze repository {repo.url}: {e}")
+                # 실패한 레포지토리도 기록 (에러 정보와 함께)
+                repo_analysis = RepositoryAnalysis(
+                    repository=repo,
+                    clone_path="",
+                    files=[],
+                    code_metrics=CodeMetrics()
+                )
+                repository_analyses.append(repo_analysis)
+        
+        # 7. 레포지토리간 연관도 분석 (옵션)
+        correlation_analysis = None
+        if request.include_correlation and len(repository_analyses) > 1:
+            correlation_analysis = analyze_correlations(repository_analyses)
+        
+        # 분석 결과 업데이트
+        analysis_results[analysis_id].repositories = repository_analyses
+        analysis_results[analysis_id].correlation_analysis = correlation_analysis
+        analysis_results[analysis_id].status = AnalysisStatus.COMPLETED
+        analysis_results[analysis_id].completed_at = datetime.now()
+        
+        # 정리
+        git_analyzer.cleanup()
+        
+        logger.info(f"Analysis {analysis_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Analysis {analysis_id} failed: {e}")
+        analysis_results[analysis_id].status = AnalysisStatus.FAILED
+        analysis_results[analysis_id].error_message = str(e)
+        analysis_results[analysis_id].completed_at = datetime.now()
+
+
+def analyze_tech_specs(clone_path: str, files: List) -> List[TechSpec]:
+    """기술스펙 분석"""
+    tech_specs = []
+    
+    # 언어별 의존성 파일 찾기
+    dependency_files = {
+        'requirements.txt': 'Python',
+        'package.json': 'JavaScript/Node.js',
+        'pom.xml': 'Java/Maven',
+        'build.gradle': 'Java/Gradle',
+        'Cargo.toml': 'Rust',
+        'go.mod': 'Go'
+    }
+    
+    for file_info in files:
+        filename = file_info.path.split('/')[-1]
+        if filename in dependency_files:
+            language = dependency_files[filename]
+            dependencies = extract_dependencies(clone_path, file_info.path, language)
+            
+            tech_spec = TechSpec(
+                language=language,
+                dependencies=dependencies,
+                package_manager=get_package_manager(filename)
+            )
+            tech_specs.append(tech_spec)
+    
+    return tech_specs
+
+
+def extract_dependencies(clone_path: str, file_path: str, language: str) -> List[str]:
+    """의존성 추출"""
+    dependencies = []
+    full_path = f"{clone_path}/{file_path}"
+    
+    try:
+        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            
+        if language == 'Python':
+            # requirements.txt 파싱
+            for line in content.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # 버전 정보 제거
+                    dep = line.split('==')[0].split('>=')[0].split('<=')[0].split('~=')[0]
+                    dependencies.append(dep.strip())
+                    
+        elif language == 'JavaScript/Node.js':
+            # package.json 파싱 (간단한 버전)
+            import json
+            try:
+                data = json.loads(content)
+                if 'dependencies' in data:
+                    dependencies.extend(data['dependencies'].keys())
+                if 'devDependencies' in data:
+                    dependencies.extend(data['devDependencies'].keys())
+            except json.JSONDecodeError:
+                pass
+                
+    except Exception as e:
+        logger.warning(f"Failed to extract dependencies from {file_path}: {e}")
+    
+    return dependencies
+
+
+def get_package_manager(filename: str) -> str:
+    """패키지 매니저 식별"""
+    manager_map = {
+        'requirements.txt': 'pip',
+        'package.json': 'npm',
+        'pom.xml': 'maven',
+        'build.gradle': 'gradle',
+        'Cargo.toml': 'cargo',
+        'go.mod': 'go mod'
+    }
+    return manager_map.get(filename, 'unknown')
+
+
+def calculate_code_metrics(files: List) -> CodeMetrics:
+    """코드 메트릭 계산"""
+    total_lines = sum(f.lines_of_code or 0 for f in files if f.lines_of_code)
+    
+    return CodeMetrics(
+        lines_of_code=total_lines,
+        cyclomatic_complexity=None,  # 추후 구현
+        maintainability_index=None,  # 추후 구현
+        comment_ratio=None  # 추후 구현
+    )
+
+
+def find_documentation_files(files: List) -> List[str]:
+    """문서 파일 찾기"""
+    doc_patterns = ['readme', 'doc', 'docs', '.md', '.rst', '.txt']
+    doc_files = []
+    
+    for file_info in files:
+        path_lower = file_info.path.lower()
+        if any(pattern in path_lower for pattern in doc_patterns):
+            doc_files.append(file_info.path)
+    
+    return doc_files
+
+
+def find_config_files(files: List) -> List[str]:
+    """설정 파일 찾기"""
+    config_patterns = ['.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.conf']
+    config_files = []
+    
+    for file_info in files:
+        path_lower = file_info.path.lower()
+        if any(path_lower.endswith(pattern) for pattern in config_patterns):
+            config_files.append(file_info.path)
+    
+    return config_files
+
+
+def analyze_correlations(repository_analyses: List[RepositoryAnalysis]) -> CorrelationAnalysis:
+    """레포지토리간 연관도 분석"""
+    # 공통 의존성 찾기
+    all_dependencies = []
+    for repo_analysis in repository_analyses:
+        for tech_spec in repo_analysis.tech_specs:
+            all_dependencies.extend(tech_spec.dependencies)
+    
+    # 의존성 빈도 계산
+    dependency_count = {}
+    for dep in all_dependencies:
+        dependency_count[dep] = dependency_count.get(dep, 0) + 1
+    
+    # 2개 이상의 레포지토리에서 사용되는 의존성
+    common_dependencies = [dep for dep, count in dependency_count.items() if count > 1]
+    
+    # 공통 기술 스택
+    all_languages = set()
+    for repo_analysis in repository_analyses:
+        for tech_spec in repo_analysis.tech_specs:
+            all_languages.add(tech_spec.language)
+    
+    return CorrelationAnalysis(
+        common_dependencies=common_dependencies,
+        similar_patterns=[],  # 추후 구현
+        architecture_similarity=0.0,  # 추후 구현
+        shared_technologies=list(all_languages)
+    )
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="127.0.0.1",
+        port=8001,
+        reload=True,
+        log_level="info"
+    )
