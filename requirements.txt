@@ -6,6 +6,11 @@ requests
 aiofiles
 python-multipart
 
+# 데이터베이스 연결
+sqlalchemy
+pymysql
+python-dotenv
+
 # AST 분석을 위한 라이브러리들 (선택적)
 # ast-decompiler
 # tree-sitter
