@@ -92,6 +92,14 @@ def load_all_analysis_results():
 # 서버 시작 시 기존 결과 로드
 load_all_analysis_results()
 
+# 데이터베이스 초기화
+try:
+    from database import init_database
+    init_database()
+except Exception as e:
+    logger.error(f"Database initialization failed: {e}")
+    logger.warning("Continuing without database support")
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -252,6 +260,13 @@ async def perform_analysis(analysis_id: str, request: AnalysisRequest):
         # 분석 결과를 디스크에 저장
         save_analysis_result(analysis_id, analysis_results[analysis_id])
         
+        # 분석 결과를 데이터베이스에 저장
+        try:
+            from database import save_analysis_to_db
+            save_analysis_to_db(analysis_results[analysis_id])
+        except Exception as db_error:
+            logger.error(f"Failed to save analysis {analysis_id} to database: {db_error}")
+        
         # 정리
         git_analyzer.cleanup()
         
@@ -265,6 +280,13 @@ async def perform_analysis(analysis_id: str, request: AnalysisRequest):
         
         # 실패한 분석 결과도 저장
         save_analysis_result(analysis_id, analysis_results[analysis_id])
+        
+        # 실패한 분석 결과도 데이터베이스에 저장
+        try:
+            from database import save_analysis_to_db
+            save_analysis_to_db(analysis_results[analysis_id])
+        except Exception as db_error:
+            logger.error(f"Failed to save failed analysis {analysis_id} to database: {db_error}")
 
 
 def analyze_tech_specs(clone_path: str, files: List) -> List[TechSpec]:
