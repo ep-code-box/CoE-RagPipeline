@@ -1,5 +1,8 @@
 import asyncio
+import json
 import logging
+import os
+import socket
 import uuid
 from datetime import datetime
 from typing import Dict, List
@@ -43,8 +46,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 분석 결과 저장소 (실제 운영에서는 데이터베이스 사용)
+# 분석 결과 저장소 및 영구 저장 설정
+RESULTS_DIR = "output/results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
 analysis_results: Dict[str, AnalysisResult] = {}
+
+def save_analysis_result(analysis_id: str, result: AnalysisResult):
+    """분석 결과를 JSON 파일로 저장"""
+    try:
+        file_path = os.path.join(RESULTS_DIR, f"{analysis_id}.json")
+        with open(file_path, 'w', encoding='utf-8') as f:
+            # Pydantic 모델을 dict로 변환하여 저장
+            json.dump(result.model_dump(), f, ensure_ascii=False, indent=2, default=str)
+        logger.info(f"Analysis result saved to {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to save analysis result {analysis_id}: {e}")
+
+def load_analysis_result(analysis_id: str) -> AnalysisResult:
+    """JSON 파일에서 분석 결과를 로드"""
+    try:
+        file_path = os.path.join(RESULTS_DIR, f"{analysis_id}.json")
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return AnalysisResult(**data)
+    except Exception as e:
+        logger.error(f"Failed to load analysis result {analysis_id}: {e}")
+    return None
+
+def load_all_analysis_results():
+    """모든 저장된 분석 결과를 메모리로 로드"""
+    global analysis_results
+    try:
+        for filename in os.listdir(RESULTS_DIR):
+            if filename.endswith('.json'):
+                analysis_id = filename[:-5]  # .json 제거
+                result = load_analysis_result(analysis_id)
+                if result:
+                    analysis_results[analysis_id] = result
+        logger.info(f"Loaded {len(analysis_results)} analysis results from disk")
+    except Exception as e:
+        logger.error(f"Failed to load analysis results: {e}")
+
+# 서버 시작 시 기존 결과 로드
+load_all_analysis_results()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -83,10 +129,31 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
 @app.get("/results/{analysis_id}", response_model=AnalysisResult)
 async def get_analysis_result(analysis_id: str):
     """분석 결과 조회"""
-    if analysis_id not in analysis_results:
-        raise HTTPException(status_code=404, detail="분석 결과를 찾을 수 없습니다.")
+    # 먼저 메모리에서 확인
+    if analysis_id in analysis_results:
+        return analysis_results[analysis_id]
     
-    return analysis_results[analysis_id]
+    # 메모리에 없으면 디스크에서 로드 시도
+    result = load_analysis_result(analysis_id)
+    if result:
+        analysis_results[analysis_id] = result  # 메모리에 캐시
+        return result
+    
+    # 둘 다 없으면 404 에러
+    available_ids = list(analysis_results.keys())
+    error_detail = {
+        "message": "분석 결과를 찾을 수 없습니다.",
+        "analysis_id": analysis_id,
+        "available_analysis_ids": available_ids[:5],  # 최대 5개만 표시
+        "total_available": len(available_ids),
+        "suggestions": [
+            "1. 올바른 analysis_id를 사용하고 있는지 확인하세요.",
+            "2. /results 엔드포인트로 사용 가능한 분석 결과 목록을 확인하세요.",
+            "3. 분석이 아직 진행 중이거나 실패했을 수 있습니다.",
+            "4. 분석 ID 형식이 올바른지 확인하세요 (UUID 형식)."
+        ]
+    }
+    raise HTTPException(status_code=404, detail=error_detail)
 
 
 @app.get("/results", response_model=List[dict])
@@ -182,6 +249,9 @@ async def perform_analysis(analysis_id: str, request: AnalysisRequest):
         analysis_results[analysis_id].status = AnalysisStatus.COMPLETED
         analysis_results[analysis_id].completed_at = datetime.now()
         
+        # 분석 결과를 디스크에 저장
+        save_analysis_result(analysis_id, analysis_results[analysis_id])
+        
         # 정리
         git_analyzer.cleanup()
         
@@ -192,6 +262,9 @@ async def perform_analysis(analysis_id: str, request: AnalysisRequest):
         analysis_results[analysis_id].status = AnalysisStatus.FAILED
         analysis_results[analysis_id].error_message = str(e)
         analysis_results[analysis_id].completed_at = datetime.now()
+        
+        # 실패한 분석 결과도 저장
+        save_analysis_result(analysis_id, analysis_results[analysis_id])
 
 
 def analyze_tech_specs(clone_path: str, files: List) -> List[TechSpec]:
@@ -341,11 +414,47 @@ def analyze_correlations(repository_analyses: List[RepositoryAnalysis]) -> Corre
     )
 
 
+def find_available_port(start_port: int = 8001, max_attempts: int = 10) -> int:
+    """
+    주어진 시작 포트부터 사용 가능한 포트를 찾아 반환합니다.
+    
+    Args:
+        start_port: 검색을 시작할 포트 번호
+        max_attempts: 최대 시도 횟수
+        
+    Returns:
+        사용 가능한 포트 번호
+        
+    Raises:
+        RuntimeError: 사용 가능한 포트를 찾지 못한 경우
+    """
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.bind(('127.0.0.1', port))
+                logger.info(f"Found available port: {port}")
+                return port
+        except OSError:
+            logger.debug(f"Port {port} is already in use, trying next port...")
+            continue
+    
+    raise RuntimeError(f"Could not find an available port in range {start_port}-{start_port + max_attempts - 1}")
+
+
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host="127.0.0.1",
-        port=8001,
-        reload=True,
-        log_level="info"
-    )
+    try:
+        # 사용 가능한 포트 찾기
+        available_port = find_available_port(start_port=8001)
+        logger.info(f"Starting server on port {available_port}")
+        
+        uvicorn.run(
+            "main:app",
+            host="127.0.0.1",
+            port=available_port,
+            reload=True,
+            log_level="info"
+        )
+    except RuntimeError as e:
+        logger.error(f"Failed to start server: {e}")
+        logger.info("Please check if other processes are using ports in the range 8001-8010")
+        exit(1)
