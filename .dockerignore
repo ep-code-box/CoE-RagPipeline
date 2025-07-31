@@ -1,0 +1,20 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Runtime data
+output/
+
+# Documentation & Test scripts
+*.md
+*.sh
