@@ -47,4 +47,55 @@ CoE-RagPipeline/
 
 - **`POST /analyze`**: Git 주소 목록을 받아 전체 분석 수행
 - **`GET /results/{analysis_id}`**: 분석 결과 조회
+- **`GET /results`**: 모든 분석 결과 목록 조회
 - **`GET /health`**: 서비스 상태 확인
+
+## 🧪 API 테스트
+
+### cURL 명령어로 테스트
+
+자동화된 테스트 스크립트를 실행하세요:
+
+```bash
+# 실행 권한 부여
+chmod +x test_curl.sh
+
+# 테스트 실행
+./test_curl.sh
+```
+
+또는 개별 cURL 명령어를 사용하세요:
+
+```bash
+# Health Check
+curl -X GET "http://127.0.0.1:8001/health"
+
+# 분석 시작
+curl -X POST "http://127.0.0.1:8001/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repositories": [
+      {
+        "url": "https://github.com/octocat/Hello-World.git",
+        "branch": "master"
+      }
+    ],
+    "include_ast": true,
+    "include_tech_spec": true,
+    "include_correlation": false
+  }'
+
+# 분석 결과 조회 (analysis_id는 위 응답에서 받은 값 사용)
+curl -X GET "http://127.0.0.1:8001/results/{analysis_id}"
+
+# 모든 분석 결과 목록
+curl -X GET "http://127.0.0.1:8001/results"
+```
+
+자세한 테스트 명령어는 [`curl_test_commands.md`](curl_test_commands.md) 파일을 참고하세요.
+
+### Python 스크립트로 테스트
+
+```bash
+python test_api.py
+```
