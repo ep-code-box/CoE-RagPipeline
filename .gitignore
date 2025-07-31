@@ -18,3 +18,4 @@ build/
 *.tox/
 *.vscode/
 *.idea/
+results/
