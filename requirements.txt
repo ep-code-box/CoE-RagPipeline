@@ -11,6 +11,14 @@ sqlalchemy
 pymysql
 python-dotenv
 
+# LLM 및 Embedding 관련
+openai
+langchain
+langchain-openai
+langchain-community
+langchain-chroma
+chromadb
+
 # AST 분석을 위한 라이브러리들 (선택적)
 # ast-decompiler
 # tree-sitter
