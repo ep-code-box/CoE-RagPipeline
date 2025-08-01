@@ -36,83 +36,97 @@ python main.py
 
 ```
 CoE-RagPipeline/
-├── main.py                 # FastAPI 메인 애플리케이션 (경량화됨)
+├── main.py                 # FastAPI 메인 애플리케이션
+├── Dockerfile              # Docker 이미지 빌드 파일
+├── .env.example            # 환경 변수 예시 파일 (미포함)
+├── requirements.txt        # 프로젝트 의존성
+├── README.md               # 프로젝트 문서
+├── README_EMBEDDING.md     # 임베딩 관련 상세 가이드
+├── TROUBLESHOOTING.md      # 문제 해결 가이드
+├── curl_test_commands.md   # cURL 테스트 명령어 모음
+├── test_curl.sh            # 자동화된 cURL 테스트 스크립트
+├── server.log              # 서버 로그 파일
+├── 설계.md                 # 설계 문서 (한국어)
+├── analyzers/              # 분석 모듈들
+│   ├── __init__.py
+│   ├── git_analyzer.py     # Git 레포지토리 분석
+│   └── ast_analyzer.py     # AST 분석 및 코드 파싱
+├── chroma_db/              # ChromaDB 벡터 저장소 디렉토리
 ├── config/                 # 설정 관리
-│   └── settings.py         # 애플리케이션 설정
+│   ├── __init__.py
+│   ├── settings.py         # 애플리케이션 설정
+│   └── database.py         # 데이터베이스 설정
+├── core/                   # 핵심 비즈니스 로직
+│   ├── __init__.py
+│   └── database.py         # 데이터베이스 연결 및 모델
+├── models/                 # 데이터 모델 정의
+│   ├── __init__.py
+│   └── schemas.py          # Pydantic 스키마
+├── output/                 # 분석 결과 저장 디렉토리
+│   └── results/            # JSON 분석 결과 파일들
 ├── routers/                # API 라우터들
+│   ├── __init__.py
 │   ├── analysis.py         # 분석 관련 API
 │   ├── embedding.py        # 임베딩 관련 API
 │   └── health.py           # 헬스체크 API
 ├── services/               # 비즈니스 로직 서비스들
-│   ├── analysis_service.py # 분석 서비스
-│   └── embedding_service.py # 임베딩 서비스
-├── analyzers/              # 분석 모듈들
-│   ├── git_analyzer.py     # Git 레포지토리 분석
-│   └── ast_analyzer.py     # AST 분석
-├── utils/                  # 유틸리티 함수들
-│   ├── file_utils.py       # 파일 관련 유틸리티
-│   ├── tech_utils.py       # 기술스펙 관련 유틸리티
-│   └── server_utils.py     # 서버 관련 유틸리티
-├── models/                 # 데이터 모델 정의
-│   └── schemas.py          # Pydantic 스키마
-├── output/                 # 분석 결과 저장 디렉토리
-│   └── results/            # JSON 분석 결과 파일들
-└── chroma_db/              # ChromaDB 벡터 저장소
+│   ├── __init__.py
+│   ├── analysis_service.py # Git 분석 및 처리 서비스
+│   └── embedding_service.py # 임베딩 및 벡터 검색 서비스
+└── utils/                  # 유틸리티 함수들
+    ├── __init__.py
+    ├── app_initializer.py  # 애플리케이션 초기화 유틸리티
+    ├── file_utils.py       # 파일 관련 유틸리티
+    ├── server_utils.py     # 서버 관련 유틸리티
+    └── tech_utils.py       # 기술스펙 관련 유틸리티
 ```
 
 ## 🔧 API 엔드포인트
 
-### 코드 분석
-- **`POST /api/v1/analyze`**: Git 주소 목록을 받아 전체 분석 수행
+### 🔍 Git 분석 및 코드 처리
+- **`POST /api/v1/analyze`**: Git 레포지토리 전체 분석 수행
   - AST 분석, 기술스펙 분석, 연관도 분석 옵션 지원
-  - 문서 수집 및 분석 포함
-- **`GET /api/v1/results/{analysis_id}`**: 분석 결과 조회
+  - 자동 문서 수집 및 임베딩 처리
+  - 백그라운드 작업으로 비동기 처리
 - **`GET /api/v1/results`**: 모든 분석 결과 목록 조회
+  - 완료/진행중/실패 상태별 필터링 지원
+  - 페이지네이션 지원
+- **`GET /api/v1/results/{analysis_id}`**: 특정 분석 결과 상세 조회
+  - AST 분석 결과, 기술 스택 정보 포함
+  - 파일별 상세 분석 데이터 제공
 
-### 문서 처리
-- **`POST /documents/extract`**: 레포지토리에서 문서 자동 추출
-  - doc 폴더, README, 위키 페이지 수집
-  - 참조 URL에서 외부 문서 수집
-- **`POST /documents/analyze`**: 수집된 문서 분석 및 구조화
-- **`GET /documents/{analysis_id}`**: 문서 분석 결과 조회
-
-### RAG 시스템
+### 🔍 벡터 검색 및 RAG
 - **`POST /api/v1/search`**: 벡터 유사도 검색
-- **`GET /api/v1/stats`**: 임베딩 통계 정보 조회
+  - ChromaDB 기반 고성능 검색
+  - 메타데이터 필터링 지원
+  - 유사도 점수 및 컨텍스트 제공
+- **`GET /api/v1/stats`**: 임베딩 및 벡터 통계 정보
+  - 총 문서 수, 벡터 차원, 컬렉션 정보
+  - 검색 성능 메트릭
 
-### 표준 문서 생성
-- **`POST /standards/generate`**: 개발 표준 문서 자동 생성
-  - 코딩 스타일 가이드
-  - 아키텍처 패턴 문서
-  - 공통 함수 및 유틸리티 가이드
-- **`GET /standards/{analysis_id}`**: 생성된 표준 문서 조회
-
-### 시스템
-- **`GET /health`**: 서비스 상태 확인
-- **`GET /metrics`**: 분석 성능 메트릭 조회
+### 🏥 시스템 관리
+- **`GET /health`**: 서비스 상태 및 의존성 확인
+  - 데이터베이스 연결 상태
+  - ChromaDB 연결 상태
+  - 임베딩 서비스 연결 상태
 
 ## 🧪 API 테스트
 
-### cURL 명령어로 테스트
-
-자동화된 테스트 스크립트를 실행하세요:
+### 🏥 헬스체크 및 시스템 상태
 
 ```bash
-# 실행 권한 부여
-chmod +x test_curl.sh
+# 서비스 상태 확인
+curl -X GET "http://localhost:8001/health"
 
-# 테스트 실행
-./test_curl.sh
+# 벡터 데이터베이스 통계 확인
+curl -X GET "http://localhost:8001/api/v1/stats"
 ```
 
-또는 개별 cURL 명령어를 사용하세요:
+### 🔍 Git 레포지토리 분석
 
 ```bash
-# Health Check
-curl -X GET "http://127.0.0.1:8001/health"
-
-# 분석 시작
-curl -X POST "http://127.0.0.1:8001/api/v1/analyze" \
+# 분석 시작 (공개 레포지토리)
+curl -X POST "http://localhost:8001/api/v1/analyze" \
   -H "Content-Type: application/json" \
   -d '{
     "repositories": [
@@ -123,23 +137,56 @@ curl -X POST "http://127.0.0.1:8001/api/v1/analyze" \
     ],
     "include_ast": true,
     "include_tech_spec": true,
-    "include_correlation": false
+    "include_correlation": true
   }'
 
-# 분석 결과 조회 (analysis_id는 위 응답에서 받은 값 사용)
-curl -X GET "http://127.0.0.1:8001/api/v1/results/{analysis_id}"
+# 응답 예시:
+# {
+#   "analysis_id": "3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c",
+#   "status": "started",
+#   "message": "분석이 시작되었습니다."
+# }
+```
 
-# 모든 분석 결과 목록
-curl -X GET "http://127.0.0.1:8001/api/v1/results"
+### 📊 분석 결과 조회
+
+```bash
+# 모든 분석 결과 목록 조회
+curl -X GET "http://localhost:8001/api/v1/results"
+
+# 특정 분석 결과 상세 조회 (analysis_id는 위에서 받은 값 사용)
+curl -X GET "http://localhost:8001/api/v1/results/3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c"
+```
+
+### 🔍 벡터 검색 테스트
+
+```bash
+# 벡터 검색 (분석 완료 후 사용 가능)
+curl -X POST "http://localhost:8001/api/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Python 함수 정의",
+    "k": 5,
+    "filter_metadata": {
+      "file_type": "python"
+    }
+  }'
+```
+
+### 🔧 자동화된 테스트 스크립트
+
+```bash
+# 실행 권한 부여
+chmod +x test_curl.sh
+
+# 전체 테스트 실행
+./test_curl.sh
+
+# Python 테스트 스크립트 실행
+python test_api.py
 ```
 
 자세한 테스트 명령어는 [`curl_test_commands.md`](curl_test_commands.md) 파일을 참고하세요.
-
-### Python 스크립트로 테스트
-
-```bash
-python test_api.py
-```
 
 ## 🔧 문제 해결
 
@@ -181,9 +228,9 @@ python test_api.py
 
 ## 🔧 고급 기능
 
-### 정적 분석 상세
+### 📊 정적 분석 상세
 
-#### AST 분석
+#### AST (추상 구문 트리) 분석
 - **함수 및 클래스 추출**: 모든 함수, 클래스, 메서드의 시그니처와 독스트링 추출
 - **의존성 그래프**: import/require 관계를 통한 모듈 의존성 그래프 생성
 - **복잡도 분석**: 순환 복잡도(Cyclomatic Complexity) 및 코드 메트릭 계산
@@ -195,34 +242,27 @@ python test_api.py
 - **보안 취약점**: 알려진 취약점이 있는 라이브러리 버전 감지
 - **라이선스 분석**: 사용된 라이브러리의 라이선스 호환성 검사
 
-### 문서 수집 및 분석
+### 📚 문서 수집 및 분석
 
 #### 자동 문서 수집
 ```python
 # 수집 대상 문서 유형
 DOCUMENT_PATTERNS = [
-    "README*",
-    "CHANGELOG*", 
-    "docs/**/*.md",
-    "doc/**/*.md",
-    "*.wiki",
-    "API.md",
-    "CONTRIBUTING.md"
-]
-
-# 외부 문서 수집
-EXTERNAL_DOC_SOURCES = [
-    "confluence_urls",
-    "notion_pages", 
-    "github_wiki",
-    "reference_urls"
+    "README*",           # README 파일들
+    "CHANGELOG*",        # 변경 이력
+    "docs/**/*.md",      # 문서 폴더
+    "doc/**/*.md",       # 문서 폴더 (단수형)
+    "*.wiki",            # 위키 파일
+    "API.md",            # API 문서
+    "CONTRIBUTING.md"    # 기여 가이드
 ]
 ```
 
-#### 문서 구조화
+#### 문서 구조화 및 임베딩
 - **마크다운 파싱**: 헤더, 코드 블록, 링크 구조 분석
 - **API 문서 추출**: OpenAPI/Swagger 스펙 자동 추출
 - **코드 예제 수집**: 문서 내 코드 예제와 실제 코드 매칭
+- **자동 벡터화**: 수집된 문서를 ChromaDB에 자동 임베딩
 
 ### RAG 시스템 구축
 
