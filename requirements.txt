@@ -43,3 +43,4 @@ tqdm
 colorama
 rich
 typer
+redis
