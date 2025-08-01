@@ -36,27 +36,38 @@ python main.py
 
 ```
 CoE-RagPipeline/
-├── main.py                 # FastAPI 메인 애플리케이션
-├── models/                 # 데이터 모델 정의
+├── main.py                 # FastAPI 메인 애플리케이션 (경량화됨)
+├── config/                 # 설정 관리
+│   └── settings.py         # 애플리케이션 설정
+├── routers/                # API 라우터들
+│   ├── analysis.py         # 분석 관련 API
+│   ├── embedding.py        # 임베딩 관련 API
+│   └── health.py           # 헬스체크 API
+├── services/               # 비즈니스 로직 서비스들
+│   ├── analysis_service.py # 분석 서비스
+│   └── embedding_service.py # 임베딩 서비스
 ├── analyzers/              # 분석 모듈들
 │   ├── git_analyzer.py     # Git 레포지토리 분석
-│   ├── ast_analyzer.py     # AST 분석
-│   ├── tech_analyzer.py    # 기술스펙 분석
-│   └── correlation_analyzer.py # 연관도 분석
+│   └── ast_analyzer.py     # AST 분석
 ├── utils/                  # 유틸리티 함수들
-└── output/                 # 분석 결과 저장 디렉토리
-├── services/               # 서비스 계층 (Embedding 등)
+│   ├── file_utils.py       # 파일 관련 유틸리티
+│   ├── tech_utils.py       # 기술스펙 관련 유틸리티
+│   └── server_utils.py     # 서버 관련 유틸리티
+├── models/                 # 데이터 모델 정의
+│   └── schemas.py          # Pydantic 스키마
+├── output/                 # 분석 결과 저장 디렉토리
+│   └── results/            # JSON 분석 결과 파일들
 └── chroma_db/              # ChromaDB 벡터 저장소
 ```
 
 ## 🔧 API 엔드포인트
 
 ### 코드 분석
-- **`POST /analyze`**: Git 주소 목록을 받아 전체 분석 수행
+- **`POST /api/v1/analyze`**: Git 주소 목록을 받아 전체 분석 수행
   - AST 분석, 기술스펙 분석, 연관도 분석 옵션 지원
   - 문서 수집 및 분석 포함
-- **`GET /results/{analysis_id}`**: 분석 결과 조회
-- **`GET /results`**: 모든 분석 결과 목록 조회
+- **`GET /api/v1/results/{analysis_id}`**: 분석 결과 조회
+- **`GET /api/v1/results`**: 모든 분석 결과 목록 조회
 
 ### 문서 처리
 - **`POST /documents/extract`**: 레포지토리에서 문서 자동 추출
@@ -66,11 +77,8 @@ CoE-RagPipeline/
 - **`GET /documents/{analysis_id}`**: 문서 분석 결과 조회
 
 ### RAG 시스템
-- **`POST /rag/index`**: 분석 결과를 벡터 데이터베이스에 인덱싱
-  - 코드 청크 및 문서 청크 생성
-  - 임베딩 생성 및 ChromaDB 저장
-- **`POST /rag/search`**: 벡터 유사도 검색
-- **`GET /rag/collections`**: 사용 가능한 컬렉션 목록
+- **`POST /api/v1/search`**: 벡터 유사도 검색
+- **`GET /api/v1/stats`**: 임베딩 통계 정보 조회
 
 ### 표준 문서 생성
 - **`POST /standards/generate`**: 개발 표준 문서 자동 생성
@@ -104,7 +112,7 @@ chmod +x test_curl.sh
 curl -X GET "http://127.0.0.1:8001/health"
 
 # 분석 시작
-curl -X POST "http://127.0.0.1:8001/analyze" \
+curl -X POST "http://127.0.0.1:8001/api/v1/analyze" \
   -H "Content-Type: application/json" \
   -d '{
     "repositories": [
@@ -119,10 +127,10 @@ curl -X POST "http://127.0.0.1:8001/analyze" \
   }'
 
 # 분석 결과 조회 (analysis_id는 위 응답에서 받은 값 사용)
-curl -X GET "http://127.0.0.1:8001/results/{analysis_id}"
+curl -X GET "http://127.0.0.1:8001/api/v1/results/{analysis_id}"
 
 # 모든 분석 결과 목록
-curl -X GET "http://127.0.0.1:8001/results"
+curl -X GET "http://127.0.0.1:8001/api/v1/results"
 ```
 
 자세한 테스트 명령어는 [`curl_test_commands.md`](curl_test_commands.md) 파일을 참고하세요.
