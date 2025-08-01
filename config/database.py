@@ -1,28 +1,43 @@
 import os
 import json
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON, Float, ForeignKey, Enum, DECIMAL
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 from dotenv import load_dotenv
+import enum
 
 # 환경 변수 로드
 load_dotenv()
 
 # 데이터베이스 연결 설정
 DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "6667")
+DB_PORT = os.getenv("DB_PORT", "3306")
 DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "acce")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "coe_db")
 
 # MariaDB 연결 URL
 DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # SQLAlchemy 엔진 및 세션 설정
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(DATABASE_URL, echo=True, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# Enum 정의 (CoE-Backend와 동일하게 유지)
+class AnalysisStatus(enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+class RepositoryStatus(enum.Enum):
+    PENDING = "PENDING"
+    CLONING = "CLONING"
+    ANALYZING = "ANALYZING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 # RAG Pipeline 분석 결과 테이블 모델
 class RagAnalysisResult(Base):
@@ -32,7 +47,7 @@ class RagAnalysisResult(Base):
     analysis_id = Column(String(255), unique=True, index=True, nullable=False)
     git_url = Column(String(500), index=True, nullable=False)  # Git URL을 키로 사용
     analysis_date = Column(DateTime, default=datetime.utcnow, nullable=False)  # 분석일자
-    status = Column(String(50), nullable=False)  # pending, running, completed, failed
+    status = Column(Enum(AnalysisStatus), default=AnalysisStatus.PENDING)
     repository_count = Column(Integer, default=0)
     total_files = Column(Integer, default=0)
     total_lines_of_code = Column(Integer, default=0)
