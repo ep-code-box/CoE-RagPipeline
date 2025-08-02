@@ -123,7 +123,7 @@ if __name__ == "__main__":
             port=available_port,
             reload=settings.RELOAD,
             # reload_dirs=["routers", "services", "models", "core", "utils"],  # 감시할 디렉토리 지정
-            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv"],  # 제외할 패턴 지정
+            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv", ".git", "output"],  # 제외할 패턴 지정
             log_level=settings.LOG_LEVEL
         )
     except RuntimeError as e:
