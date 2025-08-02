@@ -14,11 +14,6 @@ def initialize_services():
     from routers import analysis
     analysis.analysis_results = analysis_results
     
-    # 데이터베이스 초기화 (선택적)
-    try:
-        from core.database import init_database
-        init_database()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        logger.warning("Continuing without database support")
+    # 데이터베이스 초기화 (선택적) - main.py에서 이미 초기화되므로 제거
+    # 데이터베이스 초기화는 main.py에서 처리됨
+    logger.info("Services initialized successfully")
