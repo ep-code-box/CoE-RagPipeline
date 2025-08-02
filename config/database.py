@@ -90,25 +90,37 @@ def get_db():
 # 데이터베이스 연결 테스트
 def test_connection():
     """데이터베이스 연결을 테스트합니다."""
-    try:
-        # 먼저 데이터베이스 없이 연결 테스트
-        test_url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}"
-        test_engine = create_engine(test_url)
-        
-        with test_engine.connect() as connection:
-            # 데이터베이스 생성
-            from sqlalchemy import text
-            connection.execute(text(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}"))
-            print(f"✅ 데이터베이스 '{DB_NAME}' 생성/확인 완료")
-        
-        # 이제 실제 데이터베이스에 연결
-        with engine.connect() as connection:
-            result = connection.execute(text("SELECT 1"))
-            print("✅ MariaDB 연결 성공!")
-            return True
-    except Exception as e:
-        print(f"❌ MariaDB 연결 실패: {e}")
-        return False
+    import time
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            # 먼저 데이터베이스 없이 연결 테스트
+            test_url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}"
+            test_engine = create_engine(test_url)
+            
+            with test_engine.connect() as connection:
+                # 데이터베이스 생성
+                from sqlalchemy import text
+                connection.execute(text(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}"))
+                print(f"✅ 데이터베이스 '{DB_NAME}' 생성/확인 완료")
+            
+            # 이제 실제 데이터베이스에 연결
+            with engine.connect() as connection:
+                result = connection.execute(text("SELECT 1"))
+                print("✅ MariaDB 연결 성공!")
+                return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"⚠️ MariaDB 연결 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+                print(f"🔄 {retry_delay}초 후 재시도...")
+                time.sleep(retry_delay)
+            else:
+                print(f"❌ MariaDB 연결 실패 (최종): {e}")
+                return False
+    
+    return False
 
 # 데이터베이스 초기화 상태 추적 (파일 기반)
 import tempfile
