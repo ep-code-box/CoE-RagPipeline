@@ -275,6 +275,130 @@ python test_api.py
 
 자세한 테스트 명령어는 [`curl_test_commands.md`](curl_test_commands.md) 파일을 참고하세요.
 
+## 📄 LLM 기반 문서 자동 생성
+
+### 🚀 개요
+
+CoE RAG Pipeline에 LLM을 활용한 문서 자동 생성 기능이 추가되었습니다. 이 기능은 Git 레포지토리 분석 결과를 바탕으로 다양한 타입의 개발 문서를 자동으로 생성합니다.
+
+### ✨ 주요 기능
+
+#### 🔄 자동 문서 생성
+- **분석 완료 시 자동 실행**: Git 분석이 완료되면 자동으로 기본 문서들을 생성
+- **백그라운드 처리**: 문서 생성은 비동기로 처리되어 API 응답 속도에 영향 없음
+- **다중 문서 생성**: 한 번의 요청으로 여러 타입의 문서를 동시 생성
+
+#### 📋 지원 문서 타입
+
+1. **development_guide**: 개발 가이드 - 코딩 컨벤션, 아키텍처 패턴, 모범 사례
+2. **api_documentation**: API 문서 - 엔드포인트 설명, 요청/응답 예시, 사용법 가이드
+3. **architecture_overview**: 아키텍처 개요 - 시스템 구조, 컴포넌트 관계, 데이터 흐름
+4. **code_review_summary**: 코드 리뷰 요약 - 발견된 이슈, 개선 사항, 권장사항
+5. **technical_specification**: 기술 명세서 - 기술 스택, 의존성 정보, 버전 정보
+6. **deployment_guide**: 배포 가이드 - 환경 설정, 빌드 과정, 배포 단계
+7. **troubleshooting_guide**: 문제 해결 가이드 - 일반적 오류, 해결 방법, 디버깅 팁
+
+### 📁 파일 구조
+
+```
+CoE-RagPipeline/
+├── services/
+│   └── llm_service.py              # LLM 문서 생성 서비스
+├── routers/
+│   └── document_generation.py     # 문서 생성 API 엔드포인트
+├── models/
+│   └── schemas.py                 # 문서 생성 관련 스키마 추가
+├── output/
+│   └── documents/                 # 생성된 문서 저장 디렉토리
+│       └── {analysis_id}/         # 분석별 문서 폴더
+│           ├── development_guide_korean.md
+│           ├── api_documentation_korean.md
+│           └── ...
+└── main.py                        # 문서 생성 라우터 추가
+```
+
+### 🔧 설정
+
+#### 환경 변수
+```bash
+# OpenAI API 키 (필수)
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
+#### 설정 파일 (`config/settings.py`)
+```python
+class Settings:
+    # OpenAI 설정
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    
+    # 디렉토리 설정
+    DOCUMENTS_DIR: str = "output/documents"
+```
+
+## 🔄 스마트 레포지토리 분석 (Commit 기반)
+
+### 기능 설명
+
+시스템은 분석 요청 시 다음과 같이 commit 기준으로 변경사항을 감지하고 처리합니다:
+
+1. **Commit 기반 변경 감지**: 레포지토리 URL, 브랜치, **commit hash**를 기준으로 변경사항 확인
+2. **스마트 분석 결정**: commit이 변경된 경우에만 새로운 분석 수행, 동일 commit은 기존 결과 재사용
+3. **효율성 향상**: 불필요한 중복 분석을 방지하면서도 코드 변경사항은 정확히 반영
+
+### API 응답 예시
+
+#### 새로운 분석이 필요한 경우 (Commit 변경 감지)
+```json
+{
+  "analysis_id": "new-analysis-uuid",
+  "status": "started",
+  "message": "분석이 시작되었습니다. /results/{analysis_id} 엔드포인트로 결과를 확인하세요.",
+  "existing_analyses": null,
+  "commit_info": {
+    "repository_url": "https://github.com/example/repo.git",
+    "previous_commit": "abc123ef",
+    "latest_commit": "def456gh",
+    "reason": "commit_changed"
+  }
+}
+```
+
+#### 모든 레포지토리의 Commit이 동일한 경우
+```json
+{
+  "analysis_id": "existing-analysis-uuid",
+  "status": "existing",
+  "message": "모든 레포지토리의 commit이 동일합니다. 기존 분석 결과를 사용합니다: existing-analysis-uuid",
+  "commit_info": {
+    "repository_url": "https://github.com/example/repo.git",
+    "commit_hash": "abc123ef",
+    "reason": "same_commit"
+  }
+}
+```
+
+## 🔍 분석별 RAG 검색
+
+### 기능 설명
+
+특정 분석 결과(analysis_id)를 기준으로 RAG 검색을 수행하여 더 정확하고 관련성 높은 결과를 제공합니다.
+
+### 메타데이터 구조
+
+임베딩된 문서들은 다음과 같은 메타데이터를 포함합니다:
+
+```json
+{
+  "analysis_id": "분석 ID",
+  "repository_url": "레포지토리 URL",
+  "repository_name": "레포지토리 이름",
+  "document_type": "문서 타입 (repository_summary, tech_spec, ast_analysis, code_metrics, correlation_analysis)",
+  "language": "프로그래밍 언어",
+  "file_path": "파일 경로",
+  "created_at": "생성 시간"
+}
+```
+
 ## 🔧 문제 해결
 
 ### 404 에러 "분석 결과를 찾을 수 없습니다"
@@ -314,6 +438,23 @@ python test_api.py
 - 모든 분석 결과는 `output/results/` 디렉토리에 JSON 파일로 저장됩니다
 - 서버 재시작 시 자동으로 기존 분석 결과를 로드합니다
 - 분석 완료 및 실패 시 모두 결과가 저장됩니다
+
+### LLM 문서 생성 관련 문제
+
+#### OpenAI API 키 오류
+**문제**: `ValueError: OPENAI_API_KEY가 설정되지 않았습니다.`
+
+**해결**: 환경 변수 `OPENAI_API_KEY` 설정
+
+#### 분석 결과 없음
+**문제**: `404: 분석 결과를 찾을 수 없습니다.`
+
+**해결**: 먼저 `/api/v1/analyze`로 분석 수행
+
+#### 문서 생성 실패
+- 로그에서 상세 오류 확인
+- OpenAI API 할당량 확인
+- 네트워크 연결 확인
 
 ## 🔧 고급 기능
 
