@@ -71,7 +71,7 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
         from services.analysis_service import AnalysisService
         
         # 분석 ID 생성
-        analysis_id = request.analysis_id or str(uuid.uuid4())
+        analysis_id = str(uuid.uuid4())
         
         # 분석 결과 초기화
         analysis_result = AnalysisResult(

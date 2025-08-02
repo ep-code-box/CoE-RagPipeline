@@ -18,6 +18,7 @@ build/
 *.tox/
 *.vscode/
 *.idea/
-results/
+output/
+*.swp
 .env.local
 .env.docker

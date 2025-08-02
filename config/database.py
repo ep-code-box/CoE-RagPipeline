@@ -165,7 +165,7 @@ def init_database():
 
 # 분석 결과를 데이터베이스에 저장하는 함수
 def save_analysis_to_db(analysis_result):
-    """분석 결과를 데이터베이스에 저장합니다."""
+    """분석 결과를 데이터베이스에 저장하고 마크다운 리포트를 생성합니다."""
     try:
         db = SessionLocal()
         
@@ -211,6 +211,16 @@ def save_analysis_to_db(analysis_result):
             print(f"✅ 분석 결과 저장 완료: {analysis_result.analysis_id}")
         
         db.close()
+        
+        # 마크다운 리포트 생성 (분석이 완료된 경우에만)
+        if analysis_result.status.value in ['completed', 'COMPLETED']:
+            try:
+                from utils.markdown_generator import generate_markdown_report
+                markdown_path = generate_markdown_report(analysis_result)
+                print(f"📄 마크다운 리포트 생성 완료: {markdown_path}")
+            except Exception as md_error:
+                print(f"⚠️ 마크다운 리포트 생성 실패 (데이터베이스 저장은 성공): {md_error}")
+        
         return True
         
     except Exception as e:

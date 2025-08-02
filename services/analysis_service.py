@@ -6,6 +6,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 
+# 실제 분석기 import 추가
+from analyzers.git_analyzer import GitAnalyzer
+from analyzers.ast_analyzer import ASTAnalyzer
+
+# LLM 서비스 import 추가
+from services.llm_service import LLMDocumentService, DocumentType as LLMDocumentType
+
 # 모듈 레벨 logger 정의
 logger = logging.getLogger(__name__)
 
@@ -334,32 +341,128 @@ class AnalysisService:
         from models.schemas import AnalysisStatus
         from core.database import save_analysis_to_db
         
+        logger.info(f"Starting analysis for {analysis_id}")
+
         try:
+            # 분석 상태 확인 및 업데이트
+            if analysis_id not in analysis_results:
+                logger.error(f"Analysis {analysis_id} not found in analysis_results")
+                return
+            
+            analysis_result = analysis_results[analysis_id]
+            
             # 분석 상태를 RUNNING으로 변경
-            if analysis_id in analysis_results:
-                analysis_results[analysis_id].status = AnalysisStatus.RUNNING
-                
-            logger.info(f"Starting analysis for {analysis_id}")
+            analysis_result.status = AnalysisStatus.RUNNING
             
             # 실제 분석 로직 수행
-            # Git 분석, AST 분석, 기술스펙 분석 로직 구현
-            await self._perform_git_analysis(analysis_id, request, analysis_results)
-            await self._perform_ast_analysis(analysis_id, request, analysis_results)
-            await self._perform_tech_spec_analysis(analysis_id, request, analysis_results)
-            
-            # 분석 완료 상태로 변경
-            if analysis_id in analysis_results:
-                analysis_results[analysis_id].status = AnalysisStatus.COMPLETED
-                analysis_results[analysis_id].completed_at = datetime.now()
+            try:
+                # Git 분석 수행
+                logger.info(f"Starting Git analysis for {analysis_id}")
+                await self._perform_git_analysis(analysis_id, request, analysis_results)
+                
+                # AST 분석 수행 (요청된 경우)
+                if hasattr(request, 'include_ast') and request.include_ast:
+                    logger.info(f"Starting AST analysis for {analysis_id}")
+                    await self._perform_ast_analysis(analysis_id, request, analysis_results)
+                
+                # 기술스펙 분석 수행 (요청된 경우)
+                if hasattr(request, 'include_tech_spec') and request.include_tech_spec:
+                    logger.info(f"Starting tech spec analysis for {analysis_id}")
+                    await self._perform_tech_spec_analysis(analysis_id, request, analysis_results)
+                
+                # 분석 완료 처리
+                analysis_result.status = AnalysisStatus.COMPLETED
+                analysis_result.completed_at = datetime.now()
                 
                 # 데이터베이스에 저장
                 try:
-                    save_analysis_to_db(analysis_results[analysis_id])
+                    save_analysis_to_db(analysis_result)
                     logger.info(f"Analysis {analysis_id} saved to database")
                 except Exception as e:
                     logger.error(f"Failed to save analysis {analysis_id} to database: {e}")
+                    # 데이터베이스 저장 실패는 전체 분석 실패로 처리하지 않음
+                
+                # LLM 문서 생성 (분석 완료 후 자동 실행)
+                try:
+                    await self._generate_analysis_documents(analysis_id, analysis_result)
+                    logger.info(f"Document generation completed for analysis {analysis_id}")
+                except Exception as e:
+                    logger.error(f"Document generation failed for analysis {analysis_id}: {e}")
+                    # 문서 생성 실패는 전체 분석 실패로 처리하지 않음
+                
+                logger.info(f"Analysis {analysis_id} completed successfully")
+                
+            except Exception as e:
+                # 분석 중 발생한 오류 처리
+                logger.error(f"Error during analysis {analysis_id}: {e}")
+                analysis_result.status = AnalysisStatus.FAILED
+                analysis_result.error_message = str(e)
+                analysis_result.completed_at = datetime.now()
+                # 저장 시도
+                try:
+                    save_analysis_to_db(analysis_result)
+                except Exception as save_error:
+                    logger.error(f"Failed to save failed analysis to database: {save_error}")
+                raise e
+                
+        except Exception as e:
+            logger.error(f"Analysis {analysis_id} failed: {e}")
+            if analysis_id in analysis_results:
+                analysis_results[analysis_id].status = AnalysisStatus.FAILED
+                analysis_results[analysis_id].error_message = str(e)
+                analysis_results[analysis_id].completed_at = datetime.now()
+                # 저장 시도
+                try:
+                    save_analysis_to_db(analysis_results[analysis_id])
+                except Exception as save_error:
+                    logger.error(f"Failed to save failed analysis to database: {save_error}")
+            raise
+
+    async def _perform_git_analysis(self, analysis_id: str, request, analysis_results: dict):
+        """Git 분석 수행"""
+        try:
+            logger.info(f"Performing Git analysis for {analysis_id}")
             
-            logger.info(f"Analysis {analysis_id} completed successfully")
+            if not hasattr(request, 'repositories') or not request.repositories:
+                logger.error("No repositories provided for analysis")
+                raise ValueError("No repositories provided for analysis")
+            
+            # Git 분석 로직 구현
+            for repo_info in request.repositories:
+                try:
+                    # GitRepository 객체의 속성에 접근
+                    git_url = str(repo_info.url)  # HttpUrl을 문자열로 변환
+                    branch = repo_info.branch if hasattr(repo_info, 'branch') else "main"  # branch가 없으면 기본값 "main" 사용
+                    repo_name = repo_info.name if hasattr(repo_info, 'name') else None  # name이 없으면 None
+                    
+                    if not git_url:  # URL이 비어있으면 건너뛰기
+                        logger.warning(f"Empty repository URL found, skipping")
+                        continue
+                    
+                    logger.info(f"Analyzing Git repository: {git_url} (branch: {branch})")
+                    
+                    # 임시 분석 결과 (실제 구현 시 대체)
+                    repo_analysis = {
+                        "git_url": git_url,
+                        "branch": branch,
+                        "name": repo_name,
+                        "total_files": 100,  # 실제 파일 수로 대체
+                        "total_lines": 5000,  # 실제 라인 수로 대체
+                        "languages": ["Python", "JavaScript"],  # 실제 언어 분석 결과로 대체
+                        "last_commit": "2024-01-01",  # 실제 마지막 커밋 날짜로 대체
+                    }
+                    
+                    if analysis_id in analysis_results:
+                        analysis_results[analysis_id].repositories.append(repo_analysis)
+                        logger.info(f"Added analysis results for repository: {git_url}")
+                
+                except Exception as e:
+                    logger.error(f"Error processing repository: {str(e)}")
+                    continue
+                        
+        except Exception as e:
+            logger.error(f"Git analysis failed for {analysis_id}: {e}")
+            raise
             
         except Exception as e:
             logger.error(f"Analysis {analysis_id} failed: {e}")
@@ -375,25 +478,65 @@ class AnalysisService:
         try:
             logger.info(f"Performing Git analysis for {analysis_id}")
             
-            # Git 분석 로직 구현
-            for repo_info in request.repositories:
-                git_url = repo_info.get('git_url', '')
-                if git_url:
-                    # 실제 Git 분석 로직을 여기에 구현
-                    # 예: git clone, 파일 구조 분석, 커밋 히스토리 분석 등
-                    logger.info(f"Analyzing Git repository: {git_url}")
+            if not hasattr(request, 'repositories') or not request.repositories:
+                logger.error("No repositories provided for analysis")
+                raise ValueError("No repositories provided for analysis")
+            
+            # 실제 Git 분석기 사용
+            git_analyzer = GitAnalyzer()
+            
+            try:
+                # Git 분석 로직 구현
+                for repo_info in request.repositories:
+                    try:
+                        # GitRepository 객체의 속성에 접근
+                        git_url = str(repo_info.url)  # HttpUrl을 문자열로 변환
+                        branch = repo_info.branch or "main"  # branch가 없으면 기본값 "main" 사용
+                        repo_name = repo_info.name  # name이 없어도 괜찮음
+
+                        if not git_url:  # URL이 비어있으면 건너뛰기
+                            logger.warning(f"Empty repository URL found, skipping")
+                            continue
+
+                        logger.info(f"Cloning Git repository: {git_url} (branch: {branch})")
+                        
+                        # 실제 Git 클론 수행
+                        from models.schemas import GitRepository
+                        git_repo = GitRepository(url=git_url, branch=branch, name=repo_name)
+                        clone_path = git_analyzer.clone_repository(git_repo)
+                        
+                        # 레포지토리 구조 분석
+                        files = git_analyzer.analyze_repository_structure(clone_path)
+                        
+                        # 설정 파일 찾기
+                        config_files = git_analyzer.find_config_files(clone_path)
+                        
+                        # 문서 파일 찾기
+                        doc_files = git_analyzer.find_documentation_files(clone_path)
+                        
+                        # 실제 분석 결과 생성
+                        from models.schemas import RepositoryAnalysis, CodeMetrics
+                        repo_analysis = RepositoryAnalysis(
+                            repository=git_repo,
+                            clone_path=clone_path,
+                            files=files,
+                            code_metrics=CodeMetrics(
+                                lines_of_code=sum(f.lines_of_code or 0 for f in files)
+                            ),
+                            config_files=config_files,
+                            documentation_files=doc_files
+                        )
+                        
+                        if analysis_id in analysis_results:
+                            analysis_results[analysis_id].repositories.append(repo_analysis)
+                            logger.info(f"Added analysis results for repository: {git_url} ({len(files)} files)")
                     
-                    # 임시 분석 결과 (실제 구현 시 대체)
-                    repo_analysis = {
-                        "git_url": git_url,
-                        "total_files": 100,  # 실제 파일 수로 대체
-                        "total_lines": 5000,  # 실제 라인 수로 대체
-                        "languages": ["Python", "JavaScript"],  # 실제 언어 분석 결과로 대체
-                        "last_commit": "2024-01-01",  # 실제 마지막 커밋 날짜로 대체
-                    }
-                    
-                    if analysis_id in analysis_results:
-                        analysis_results[analysis_id].repositories.append(repo_analysis)
+                    except Exception as e:
+                        logger.error(f"Error processing repository {git_url}: {str(e)}")
+                        continue
+            finally:
+                # 분석 완료 후 정리
+                git_analyzer.cleanup()
                         
         except Exception as e:
             logger.error(f"Git analysis failed for {analysis_id}: {e}")
@@ -405,24 +548,58 @@ class AnalysisService:
             if not request.include_ast:
                 logger.info(f"AST analysis skipped for {analysis_id}")
                 return
-                
+            
             logger.info(f"Performing AST analysis for {analysis_id}")
-            
-            # AST 분석 로직 구현
-            # 예: 코드 구조 분석, 함수/클래스 추출, 의존성 분석 등
-            
-            # 임시 분석 결과 (실제 구현 시 대체)
-            ast_analysis = {
-                "functions_count": 50,  # 실제 함수 수로 대체
-                "classes_count": 20,    # 실제 클래스 수로 대체
-                "complexity_score": 7.5,  # 실제 복잡도 점수로 대체
-                "dependencies": ["fastapi", "sqlalchemy", "pydantic"]  # 실제 의존성으로 대체
-            }
-            
-            if analysis_id in analysis_results:
-                if not hasattr(analysis_results[analysis_id], 'ast_analysis'):
-                    analysis_results[analysis_id].ast_analysis = ast_analysis
+        
+            if analysis_id in analysis_results and analysis_results[analysis_id].repositories:
+                # 실제 AST 분석기 사용
+                ast_analyzer = ASTAnalyzer()
+                
+                updated_repositories = []
+                for repo in analysis_results[analysis_id].repositories:
+                    try:
+                        # RepositoryAnalysis 객체인지 확인
+                        if not hasattr(repo, 'clone_path') or not hasattr(repo, 'files'):
+                            logger.warning(f"Invalid repository object for AST analysis: {repo}")
+                            continue
+                        
+                        logger.info(f"Performing AST analysis for repository: {repo.repository.url}")
+                        
+                        # 실제 AST 분석 수행
+                        ast_results = ast_analyzer.analyze_files(repo.clone_path, repo.files)
+                        
+                        # AST 분석 결과를 저장소에 저장
+                        repo.ast_analysis = ast_results
+                        
+                        # 코드 메트릭스 계산
+                        total_complexity = 0
+                        total_functions = 0
+                        
+                        for file_path, ast_nodes in ast_results.items():
+                            for node in ast_nodes:
+                                if hasattr(node, 'metadata') and node.metadata:
+                                    complexity = node.metadata.get('complexity_score', 0)
+                                    if complexity:
+                                        total_complexity += complexity
+                                        total_functions += 1
+                        
+                        # 평균 복잡도 계산
+                        if total_functions > 0:
+                            avg_complexity = total_complexity / total_functions
+                            repo.code_metrics.cyclomatic_complexity = avg_complexity
+                        
+                        updated_repositories.append(repo)
+                        logger.info(f"AST analysis completed for repository: {repo.repository.url} ({len(ast_results)} files analyzed)")
                     
+                    except Exception as e:
+                        logger.error(f"Error processing AST analysis for repository: {str(e)}")
+                        # 실패한 경우에도 원본 repo를 유지
+                        updated_repositories.append(repo)
+                        continue
+            
+                # 업데이트된 저장소 목록으로 교체
+                analysis_results[analysis_id].repositories = updated_repositories
+                
         except Exception as e:
             logger.error(f"AST analysis failed for {analysis_id}: {e}")
             raise
@@ -437,23 +614,147 @@ class AnalysisService:
             logger.info(f"Performing tech spec analysis for {analysis_id}")
             
             # 기술스펙 분석 로직 구현
-            # 예: 사용된 기술 스택 분석, 아키텍처 패턴 분석, 보안 취약점 분석 등
-            
-            # 임시 분석 결과 (실제 구현 시 대체)
-            tech_spec_analysis = {
-                "tech_stack": ["Python", "FastAPI", "SQLAlchemy", "MariaDB"],
-                "architecture_patterns": ["REST API", "Microservices", "MVC"],
-                "security_score": 8.0,  # 실제 보안 점수로 대체
-                "performance_score": 7.5,  # 실제 성능 점수로 대체
-                "maintainability_score": 8.5  # 실제 유지보수성 점수로 대체
-            }
-            
-            if analysis_id in analysis_results:
-                if not hasattr(analysis_results[analysis_id], 'tech_spec_analysis'):
-                    analysis_results[analysis_id].tech_spec_analysis = tech_spec_analysis
+            if analysis_id in analysis_results and analysis_results[analysis_id].repositories:
+                from models.schemas import GitRepository, RepositoryAnalysis, TechSpec, CodeMetrics
+                updated_repositories = []
+
+                for repo_dict in analysis_results[analysis_id].repositories:
+                    try:
+                        # Dictionary를 RepositoryAnalysis 객체로 변환
+                        if isinstance(repo_dict, dict):
+                            git_repo = GitRepository(
+                                url=repo_dict["git_url"],
+                                branch=repo_dict.get("branch", "main"),
+                                name=repo_dict.get("name")
+                            )
+                            repo = RepositoryAnalysis(
+                                repository=git_repo,
+                                clone_path="",  # 실제 클론 경로로 대체 필요
+                                code_metrics=CodeMetrics()
+                            )
+                        else:
+                            repo = repo_dict
+
+                        # 기술 스펙 분석 수행
+                        tech_spec = TechSpec(
+                            language="Python",
+                            framework="FastAPI",
+                            dependencies=["sqlalchemy", "pydantic", "fastapi"],
+                            version="3.9",
+                            package_manager="pip"
+                        )
+                        
+                        # tech_specs 리스트에 추가
+                        repo.tech_specs.append(tech_spec)
+                        
+                        # 코드 메트릭스 업데이트
+                        repo.code_metrics.maintainability_index = 85.0  # 실제 값으로 대체
+                        repo.code_metrics.cyclomatic_complexity = 7.5   # 실제 값으로 대체
+                        
+                        updated_repositories.append(repo)
+                        logger.info(f"Tech spec analysis completed for repository: {repo.repository.url}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing tech spec analysis for repository: {str(e)}")
+                        continue
+                
+                # 업데이트된 저장소 목록으로 교체
+                analysis_results[analysis_id].repositories = updated_repositories
                     
         except Exception as e:
             logger.error(f"Tech spec analysis failed for {analysis_id}: {e}")
+            raise
+    
+    async def _generate_analysis_documents(self, analysis_id: str, analysis_result):
+        """분석 완료 후 LLM을 사용하여 문서를 자동 생성합니다."""
+        try:
+            logger.info(f"Starting document generation for analysis {analysis_id}")
+            
+            # LLM 서비스 초기화
+            llm_service = LLMDocumentService()
+            
+            # 분석 결과를 딕셔너리로 변환
+            analysis_data = {
+                "analysis_id": analysis_id,
+                "repositories": [],
+                "tech_specs": [],
+                "ast_analysis": {},
+                "code_metrics": {}
+            }
+            
+            # 저장소 정보 추출
+            if hasattr(analysis_result, 'repositories') and analysis_result.repositories:
+                for repo in analysis_result.repositories:
+                    repo_data = {
+                        "url": repo.repository.url if hasattr(repo, 'repository') else "Unknown",
+                        "branch": repo.repository.branch if hasattr(repo, 'repository') else "main",
+                        "name": repo.repository.name if hasattr(repo, 'repository') else None
+                    }
+                    analysis_data["repositories"].append(repo_data)
+                    
+                    # 기술 스펙 정보 추가
+                    if hasattr(repo, 'tech_specs') and repo.tech_specs:
+                        for tech_spec in repo.tech_specs:
+                            tech_data = {
+                                "name": tech_spec.language if hasattr(tech_spec, 'language') else "Unknown",
+                                "version": tech_spec.version if hasattr(tech_spec, 'version') else "Unknown",
+                                "framework": tech_spec.framework if hasattr(tech_spec, 'framework') else None,
+                                "dependencies": tech_spec.dependencies if hasattr(tech_spec, 'dependencies') else []
+                            }
+                            analysis_data["tech_specs"].append(tech_data)
+                    
+                    # AST 분석 정보 추가
+                    if hasattr(repo, 'ast_analysis') and repo.ast_analysis:
+                        analysis_data["ast_analysis"].update(repo.ast_analysis)
+                    
+                    # 코드 메트릭 정보 추가
+                    if hasattr(repo, 'code_metrics') and repo.code_metrics:
+                        metrics = repo.code_metrics
+                        analysis_data["code_metrics"] = {
+                            "total_files": metrics.total_files if hasattr(metrics, 'total_files') else 0,
+                            "total_lines": metrics.total_lines if hasattr(metrics, 'total_lines') else 0,
+                            "cyclomatic_complexity": metrics.cyclomatic_complexity if hasattr(metrics, 'cyclomatic_complexity') else 0,
+                            "maintainability_index": metrics.maintainability_index if hasattr(metrics, 'maintainability_index') else 0
+                        }
+            
+            # 기본 문서 타입들 자동 생성
+            default_document_types = [
+                LLMDocumentType.DEVELOPMENT_GUIDE,
+                LLMDocumentType.TECHNICAL_SPECIFICATION,
+                LLMDocumentType.ARCHITECTURE_OVERVIEW
+            ]
+            
+            # 여러 문서 동시 생성
+            generated_documents = await llm_service.generate_multiple_documents(
+                analysis_data=analysis_data,
+                document_types=default_document_types,
+                language="korean"
+            )
+            
+            # 생성된 문서들을 파일로 저장
+            import os
+            documents_dir = f"output/documents/{analysis_id}"
+            os.makedirs(documents_dir, exist_ok=True)
+            
+            for doc in generated_documents:
+                if "error" not in doc:  # 성공적으로 생성된 문서만 저장
+                    doc_filename = f"{doc['document_type']}_{doc['language']}.md"
+                    doc_path = os.path.join(documents_dir, doc_filename)
+                    
+                    with open(doc_path, 'w', encoding='utf-8') as f:
+                        f.write(doc['content'])
+                    
+                    logger.info(f"Document saved: {doc_path}")
+                else:
+                    logger.error(f"Failed to generate document {doc['document_type']}: {doc.get('error')}")
+            
+            # 문서 생성 결과를 분석 결과에 추가
+            analysis_result.generated_documents = generated_documents
+            
+            logger.info(f"Document generation completed for analysis {analysis_id}. Generated {len([d for d in generated_documents if 'error' not in d])} documents.")
+            
+        except Exception as e:
+            logger.error(f"Document generation failed for analysis {analysis_id}: {e}")
             raise
     
     def load_analysis_result(self, analysis_id: str):
