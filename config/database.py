@@ -73,8 +73,10 @@ def create_tables():
     try:
         Base.metadata.create_all(bind=engine)
         print("✅ RAG Pipeline 데이터베이스 테이블이 성공적으로 생성되었습니다.")
+        return True
     except Exception as e:
         print(f"❌ 테이블 생성 중 오류 발생: {e}")
+        return False
 
 # 데이터베이스 세션 의존성
 def get_db():
@@ -108,9 +110,33 @@ def test_connection():
         print(f"❌ MariaDB 연결 실패: {e}")
         return False
 
+# 데이터베이스 초기화 상태 추적 (파일 기반)
+import tempfile
+import os.path
+
+def _get_init_flag_file():
+    """초기화 플래그 파일 경로를 반환합니다."""
+    return os.path.join(tempfile.gettempdir(), 'coe_rag_db_initialized.flag')
+
+def _is_database_initialized():
+    """데이터베이스가 이미 초기화되었는지 확인합니다."""
+    flag_file = _get_init_flag_file()
+    return os.path.exists(flag_file)
+
+def _mark_database_initialized():
+    """데이터베이스 초기화 완료를 표시합니다."""
+    flag_file = _get_init_flag_file()
+    with open(flag_file, 'w') as f:
+        f.write(str(datetime.now()))
+
 # 데이터베이스 초기화
 def init_database():
     """데이터베이스를 초기화합니다."""
+    # 이미 초기화되었다면 건너뛰기
+    if _is_database_initialized():
+        print("✅ Database already initialized, skipping...")
+        return True
+    
     print("🔄 RAG Pipeline 데이터베이스 초기화 중...")
     
     # 연결 테스트
@@ -118,7 +144,11 @@ def init_database():
         return False
     
     # 테이블 생성
-    create_tables()
+    if not create_tables():
+        return False
+    
+    # 초기화 완료 플래그 설정
+    _mark_database_initialized()
     return True
 
 # 분석 결과를 데이터베이스에 저장하는 함수

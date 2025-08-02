@@ -7,14 +7,19 @@ from routers import health, analysis, embedding
 from config.settings import settings
 from utils.server_utils import find_available_port
 from utils.app_initializer import initialize_services
-from core.database import init_database
+from config.database import init_database
 
-# 로깅 설정
+# 로깅 설정 - uvicorn과 중복 방지
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True  # 기존 설정 덮어쓰기
 )
 logger = logging.getLogger(__name__)
+
+# uvicorn 로거 설정 조정 (중복 로그 방지)
+uvicorn_logger = logging.getLogger("uvicorn.access")
+uvicorn_logger.disabled = False  # uvicorn 로그는 유지
 
 
 def create_app() -> FastAPI:
