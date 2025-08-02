@@ -3,7 +3,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import health, analysis, embedding
+from routers import health, analysis, embedding, document_generation
 from config.settings import settings
 from utils.server_utils import find_available_port
 from utils.app_initializer import initialize_services
@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
         - **레포지토리간 연관도**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
         - **벡터 검색**: ChromaDB 기반 고성능 검색 (`/api/v1/search`)
         - **문서 자동 수집**: README, doc 폴더, 참조 URL 자동 수집
+        - **LLM 문서 생성**: 분석 결과 기반 개발 가이드, API 문서 등 자동 생성 (`/api/v1/documents/generate`)
         
         ### 📊 분석 결과
         - **개발 표준 문서**: 코딩 스타일, 아키텍처 패턴 가이드
@@ -54,8 +55,9 @@ def create_app() -> FastAPI:
         ### 🔧 사용 방법
         1. **분석 시작**: `/api/v1/analyze`로 Git URL 제출
         2. **결과 확인**: `/api/v1/results/{analysis_id}`로 분석 결과 조회
-        3. **벡터 검색**: `/api/v1/search`로 코드/문서 검색
-        4. **통계 확인**: `/api/v1/stats`로 임베딩 통계 확인
+        3. **문서 생성**: `/api/v1/documents/generate`로 LLM 기반 문서 생성
+        4. **벡터 검색**: `/api/v1/search`로 코드/문서 검색
+        5. **통계 확인**: `/api/v1/stats`로 임베딩 통계 확인
         
         ### 🔗 연동 서비스
         - **CoE-Backend**: `http://localhost:8000` (AI 에이전트 서버)
@@ -90,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(analysis.router)
     app.include_router(embedding.router)
+    app.include_router(document_generation.router)
 
     return app
 
@@ -119,6 +122,8 @@ if __name__ == "__main__":
             host=settings.HOST,
             port=available_port,
             reload=settings.RELOAD,
+            # reload_dirs=["routers", "services", "models", "core", "utils"],  # 감시할 디렉토리 지정
+            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv"],  # 제외할 패턴 지정
             log_level=settings.LOG_LEVEL
         )
     except RuntimeError as e:

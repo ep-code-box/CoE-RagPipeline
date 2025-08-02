@@ -13,6 +13,7 @@ class Settings:
     
     # 디렉토리 설정
     RESULTS_DIR: str = "output/results"
+    DOCUMENTS_DIR: str = "output/documents"
     CHROMA_PERSIST_DIRECTORY: str = "./chroma_db"
     
     # 데이터베이스 설정
@@ -32,6 +33,7 @@ class Settings:
     def __init__(self):
         # 필요한 디렉토리 생성
         os.makedirs(self.RESULTS_DIR, exist_ok=True)
+        os.makedirs(self.DOCUMENTS_DIR, exist_ok=True)
         os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
 

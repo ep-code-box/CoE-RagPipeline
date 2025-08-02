@@ -10,6 +10,7 @@ Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석,
 - **레포지토리간 연관도 분석**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
 - **문서 자동 수집**: doc 폴더, README, 참조 URL에서 개발 문서 자동 수집 및 분석
 - **개발 표준 문서 생성**: 분석 결과를 바탕으로 코딩 스타일, 아키텍처 패턴, 공통 함수 가이드 자동 생성
+- **마크다운 리포트 자동 생성**: 분석 완료 후 상세한 마크다운 형식의 분석 리포트 자동 생성
 - **RAG 시스템 구축**: 분석된 코드와 문서를 벡터화하여 검색 가능한 지식베이스 구축
 - **JSON 결과 저장**: 모든 분석 결과를 구조화된 JSON 형태로 저장
 - **임베딩 및 벡터 저장**: ChromaDB를 통한 고성능 벡터 검색 지원
@@ -63,7 +64,8 @@ CoE-RagPipeline/
 │   ├── __init__.py
 │   └── schemas.py          # Pydantic 스키마
 ├── output/                 # 분석 결과 저장 디렉토리
-│   └── results/            # JSON 분석 결과 파일들
+│   ├── results/            # JSON 분석 결과 파일들
+│   └── markdown/           # 마크다운 리포트 파일들
 ├── routers/                # API 라우터들
 │   ├── __init__.py
 │   ├── analysis.py         # 분석 관련 API
@@ -77,6 +79,7 @@ CoE-RagPipeline/
     ├── __init__.py
     ├── app_initializer.py  # 애플리케이션 초기화 유틸리티
     ├── file_utils.py       # 파일 관련 유틸리티
+    ├── markdown_generator.py # 마크다운 리포트 생성 유틸리티
     ├── server_utils.py     # 서버 관련 유틸리티
     └── tech_utils.py       # 기술스펙 관련 유틸리티
 ```
@@ -87,6 +90,7 @@ CoE-RagPipeline/
 - **`POST /api/v1/analyze`**: Git 레포지토리 전체 분석 수행
   - AST 분석, 기술스펙 분석, 연관도 분석 옵션 지원
   - 자동 문서 수집 및 임베딩 처리
+  - **분석 완료 시 마크다운 리포트 자동 생성** (`output/markdown/` 디렉토리에 저장)
   - 백그라운드 작업으로 비동기 처리
 - **`GET /api/v1/results`**: 모든 분석 결과 목록 조회
   - 완료/진행중/실패 상태별 필터링 지원
