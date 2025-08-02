@@ -19,3 +19,5 @@ build/
 *.vscode/
 *.idea/
 results/
+.env.local
+.env.docker
