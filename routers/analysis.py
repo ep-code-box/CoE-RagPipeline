@@ -14,14 +14,59 @@ from core.database import get_db
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1", tags=["analysis"])
+router = APIRouter(
+    prefix="/api/v1", 
+    tags=["🔍 Git Analysis"],
+    responses={
+        200: {"description": "분석 성공"},
+        400: {"description": "잘못된 요청"},
+        404: {"description": "분석 결과를 찾을 수 없음"},
+        500: {"description": "서버 오류"}
+    }
+)
 
 # 메모리 캐시 (성능 향상을 위해 유지, 데이터베이스와 함께 사용)
 analysis_results = {}
 
-@router.post("/analyze", response_model=dict)
+@router.post(
+    "/analyze", 
+    response_model=dict,
+    summary="Git 레포지토리 분석 시작",
+    description="""
+    **Git 레포지토리들을 심층 분석하여 개발 가이드를 생성합니다.**
+    
+    ### 🔍 분석 항목
+    - **AST 분석**: 코드 구조, 함수, 클래스 추출
+    - **기술스펙 분석**: 의존성, 프레임워크, 라이브러리 감지
+    - **레포지토리간 연관도**: 공통 패턴, 아키텍처 유사성
+    - **문서 수집**: README, doc 폴더, 참조 URL 자동 수집
+    
+    ### 📝 사용 예시
+    ```bash
+    curl -X POST "http://localhost:8001/api/v1/analyze" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "repositories": [
+          {
+            "url": "https://github.com/octocat/Hello-World.git",
+            "branch": "master"
+          }
+        ],
+        "include_ast": true,
+        "include_tech_spec": true,
+        "include_correlation": true
+      }'
+    ```
+    
+    ### ⏱️ 처리 시간
+    - 소규모 레포지토리: 1-3분
+    - 대규모 레포지토리: 5-15분
+    - 다중 레포지토리: 레포지토리 수에 비례
+    """,
+    response_description="분석 시작 확인 및 analysis_id 반환"
+)
 async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Git 주소 목록을 받아 전체 분석 수행"""
+    """Git 레포지토리 분석 시작 - 백그라운드에서 비동기 처리됩니다."""
     try:
         from services.analysis_service import AnalysisService
         
