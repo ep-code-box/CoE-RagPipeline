@@ -68,9 +68,60 @@ analysis_results = {}
 async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Git 레포지토리 분석 시작 - 백그라운드에서 비동기 처리됩니다."""
     try:
-        from services.analysis_service import AnalysisService
+        from services.analysis_service import AnalysisService, RagRepositoryAnalysisService
         
-        # 분석 ID 생성
+        # 중복 레포지토리 체크 및 최신 commit 확인
+        from analyzers.git_analyzer import GitAnalyzer
+        
+        existing_analysis_ids = []
+        new_repositories = []
+        git_analyzer = GitAnalyzer()
+        
+        for repo in request.repositories:
+            repo_url = repo.url
+            branch = getattr(repo, 'branch', 'main')
+            
+            try:
+                # 최신 commit 정보 가져오기
+                latest_commit_info = git_analyzer.get_latest_commit_info(repo_url, branch)
+                latest_commit_hash = latest_commit_info.get('commit_hash')
+                
+                # 분석이 필요한지 확인 (commit hash 비교)
+                analysis_needed, existing_analysis_id = RagRepositoryAnalysisService.check_if_analysis_needed(
+                    db, repo_url, branch, latest_commit_hash
+                )
+                
+                if analysis_needed:
+                    new_repositories.append(repo)
+                    logger.info(f"New analysis needed for {repo_url}:{branch} - commit: {latest_commit_hash[:8] if latest_commit_hash else 'unknown'}")
+                else:
+                    existing_analysis_ids.append(existing_analysis_id)
+                    logger.info(f"Reusing existing analysis for {repo_url}:{branch}: {existing_analysis_id}")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to get commit info for {repo_url}: {e}")
+                # commit 정보를 가져올 수 없는 경우 기존 방식으로 fallback
+                existing_analysis_id = RagRepositoryAnalysisService.get_analysis_by_repository_url(
+                    db, repo_url, branch
+                )
+                
+                if existing_analysis_id:
+                    existing_analysis_ids.append(existing_analysis_id)
+                    logger.info(f"Found existing analysis for repository {repo_url}: {existing_analysis_id}")
+                else:
+                    new_repositories.append(repo)
+        
+        # 모든 레포지토리가 이미 분석된 경우, 가장 최신 분석 결과 반환
+        if not new_repositories and existing_analysis_ids:
+            latest_analysis_id = existing_analysis_ids[0]  # 가장 최신 것 사용
+            logger.info(f"All repositories already analyzed. Returning latest analysis: {latest_analysis_id}")
+            return {
+                "analysis_id": latest_analysis_id,
+                "status": "existing",
+                "message": f"모든 레포지토리가 이미 분석되었습니다. 기존 분석 결과를 사용합니다: {latest_analysis_id}"
+            }
+        
+        # 새로운 분석이 필요한 경우
         analysis_id = str(uuid.uuid4())
         
         # 분석 결과 초기화
@@ -85,14 +136,30 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
         # 메모리 캐시에 저장
         analysis_results[analysis_id] = analysis_result
         
+        # 새로운 레포지토리만 포함하는 요청 생성
+        if new_repositories:
+            new_request = AnalysisRequest(
+                repositories=new_repositories,
+                include_ast=request.include_ast,
+                include_tech_spec=request.include_tech_spec,
+                include_correlation=request.include_correlation
+            )
+        else:
+            new_request = request
+        
         # 백그라운드에서 분석 실행 (데이터베이스 세션도 전달)
         analysis_service = AnalysisService()
-        background_tasks.add_task(analysis_service.perform_analysis, analysis_id, request, analysis_results, db)
+        background_tasks.add_task(analysis_service.perform_analysis, analysis_id, new_request, analysis_results, db)
+        
+        message = "분석이 시작되었습니다."
+        if existing_analysis_ids:
+            message += f" 일부 레포지토리는 기존 분석 결과를 재사용합니다."
         
         return {
             "analysis_id": analysis_id,
             "status": "started",
-            "message": "분석이 시작되었습니다. /results/{analysis_id} 엔드포인트로 결과를 확인하세요."
+            "message": f"{message} /results/{analysis_id} 엔드포인트로 결과를 확인하세요.",
+            "existing_analyses": existing_analysis_ids if existing_analysis_ids else None
         }
     except Exception as e:
         logger.error(f"Failed to start analysis: {e}")

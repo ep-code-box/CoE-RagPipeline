@@ -73,6 +73,65 @@ class GitAnalyzer:
             logger.error(f"Unexpected error cloning repository {repository.url}: {e}")
             raise Exception(f"Clone failed: {e}")
     
+    def get_latest_commit_info(self, repository_url: str, branch: str = "main") -> Dict[str, Any]:
+        """원격 레포지토리의 최신 commit 정보를 가져옵니다 (클론 없이)"""
+        try:
+            # 임시 디렉토리에 shallow clone으로 최신 commit 정보만 가져오기
+            temp_dir = tempfile.mkdtemp(prefix="commit_check_")
+            try:
+                repo = Repo.clone_from(
+                    repository_url,
+                    temp_dir,
+                    branch=branch,
+                    depth=1  # 최신 commit만 가져오기
+                )
+                
+                # 최신 commit 정보 추출
+                latest_commit = repo.head.commit
+                commit_info = {
+                    "commit_hash": latest_commit.hexsha,
+                    "commit_date": latest_commit.committed_datetime.isoformat(),
+                    "author": latest_commit.author.name,
+                    "message": latest_commit.message.strip(),
+                    "branch": branch
+                }
+                
+                logger.info(f"Retrieved latest commit info for {repository_url}: {latest_commit.hexsha[:8]}")
+                return commit_info
+                
+            finally:
+                # 임시 디렉토리 정리
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    
+        except GitCommandError as e:
+            logger.error(f"Failed to get commit info for {repository_url}: {e}")
+            raise Exception(f"Failed to get commit info: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error getting commit info for {repository_url}: {e}")
+            raise Exception(f"Failed to get commit info: {e}")
+    
+    def get_commit_info_from_cloned_repo(self, clone_path: str) -> Dict[str, Any]:
+        """클론된 레포지토리에서 commit 정보를 가져옵니다"""
+        try:
+            repo = Repo(clone_path)
+            latest_commit = repo.head.commit
+            
+            commit_info = {
+                "commit_hash": latest_commit.hexsha,
+                "commit_date": latest_commit.committed_datetime.isoformat(),
+                "author": latest_commit.author.name,
+                "message": latest_commit.message.strip(),
+                "branch": repo.active_branch.name if repo.active_branch else "unknown"
+            }
+            
+            logger.info(f"Retrieved commit info from cloned repo: {latest_commit.hexsha[:8]}")
+            return commit_info
+            
+        except Exception as e:
+            logger.error(f"Failed to get commit info from cloned repo {clone_path}: {e}")
+            raise Exception(f"Failed to get commit info from cloned repo: {e}")
+    
     def analyze_repository_structure(self, clone_path: str) -> List[FileInfo]:
         """레포지토리 구조 분석 및 파일 정보 수집"""
         files = []

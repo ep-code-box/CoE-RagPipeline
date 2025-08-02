@@ -124,6 +124,11 @@ class RepositoryAnalysis(Base):
     branch = Column(String(100), default="main")
     clone_path = Column(String(500))
     status = Column(Enum(RepositoryStatus), default=RepositoryStatus.PENDING)
+    # Commit 정보 필드 추가
+    commit_hash = Column(String(40), nullable=True, index=True)  # Git commit hash (SHA-1)
+    commit_date = Column(DateTime, nullable=True)
+    commit_author = Column(String(255), nullable=True)
+    commit_message = Column(Text, nullable=True)
     files_count = Column(Integer, default=0)
     lines_of_code = Column(Integer, default=0)
     languages = Column(JSON)
