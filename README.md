@@ -5,13 +5,22 @@ Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석,
 ## ✨ 주요 기능
 
 - **Git 레포지토리 분석**: 여러 Git 주소를 받아 소스코드를 자동으로 클론하고 분석
+- **스마트 레포지토리 분석**: 같은 레포지토리라도 commit 변경 시 새로운 분석 수행, commit이 동일하면 기존 결과 재사용으로 효율성 향상 ⭐ **NEW**
 - **AST 분석**: Python, JavaScript, Java, TypeScript 등 주요 언어의 추상 구문 트리 분석
 - **기술스펙 정적 분석**: 의존성, 프레임워크, 라이브러리, 코드 품질 메트릭 분석
 - **레포지토리간 연관도 분석**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
 - **문서 자동 수집**: doc 폴더, README, 참조 URL에서 개발 문서 자동 수집 및 분석
-- **개발 표준 문서 생성**: 분석 결과를 바탕으로 코딩 스타일, 아키텍처 패턴, 공통 함수 가이드 자동 생성
+- **LLM 기반 문서 자동 생성**: 분석 결과를 바탕으로 7가지 타입의 개발 문서 자동 생성 ⭐ **NEW**
+  - **개발 가이드**: 코딩 컨벤션, 모범 사례, 프로젝트 구조 가이드
+  - **API 문서**: 엔드포인트 명세, 사용법, 예제 코드
+  - **아키텍처 개요**: 시스템 구조, 컴포넌트 관계, 설계 패턴
+  - **코드 리뷰 요약**: 코드 품질 이슈, 개선 사항, 보안 취약점
+  - **기술 명세서**: 기술 스택, 의존성, 환경 요구사항
+  - **배포 가이드**: 환경 설정, 빌드 과정, 배포 단계
+  - **문제 해결 가이드**: 일반적 오류, 해결법, 디버깅 팁
 - **마크다운 리포트 자동 생성**: 분석 완료 후 상세한 마크다운 형식의 분석 리포트 자동 생성
 - **RAG 시스템 구축**: 분석된 코드와 문서를 벡터화하여 검색 가능한 지식베이스 구축
+- **분석별 RAG 검색**: analysis_id 기반으로 특정 분석 결과만 검색하여 정확도 향상 ⭐ **NEW**
 - **JSON 결과 저장**: 모든 분석 결과를 구조화된 JSON 형태로 저장
 - **임베딩 및 벡터 저장**: ChromaDB를 통한 고성능 벡터 검색 지원
 
@@ -65,16 +74,19 @@ CoE-RagPipeline/
 │   └── schemas.py          # Pydantic 스키마
 ├── output/                 # 분석 결과 저장 디렉토리
 │   ├── results/            # JSON 분석 결과 파일들
-│   └── markdown/           # 마크다운 리포트 파일들
+│   ├── markdown/           # 마크다운 리포트 파일들
+│   └── documents/          # LLM 생성 문서 파일들 ⭐ **NEW**
 ├── routers/                # API 라우터들
 │   ├── __init__.py
 │   ├── analysis.py         # 분석 관련 API
+│   ├── document_generation.py # 문서 생성 관련 API ⭐ **NEW**
 │   ├── embedding.py        # 임베딩 관련 API
 │   └── health.py           # 헬스체크 API
 ├── services/               # 비즈니스 로직 서비스들
 │   ├── __init__.py
 │   ├── analysis_service.py # Git 분석 및 처리 서비스
-│   └── embedding_service.py # 임베딩 및 벡터 검색 서비스
+│   ├── embedding_service.py # 임베딩 및 벡터 검색 서비스
+│   └── llm_service.py      # LLM 기반 문서 생성 서비스 ⭐ **NEW**
 └── utils/                  # 유틸리티 함수들
     ├── __init__.py
     ├── app_initializer.py  # 애플리케이션 초기화 유틸리티
@@ -89,6 +101,7 @@ CoE-RagPipeline/
 ### 🔍 Git 분석 및 코드 처리
 - **`POST /api/v1/analyze`**: Git 레포지토리 전체 분석 수행
   - AST 분석, 기술스펙 분석, 연관도 분석 옵션 지원
+  - **스마트 중복 감지**: commit hash 기준으로 변경사항 감지, 동일 commit은 기존 결과 재사용 ⭐ **NEW**
   - 자동 문서 수집 및 임베딩 처리
   - **분석 완료 시 마크다운 리포트 자동 생성** (`output/markdown/` 디렉토리에 저장)
   - 백그라운드 작업으로 비동기 처리
@@ -99,10 +112,24 @@ CoE-RagPipeline/
   - AST 분석 결과, 기술 스택 정보 포함
   - 파일별 상세 분석 데이터 제공
 
+### 📄 문서 생성 (LLM 기반)
+- **`POST /api/v1/documents/generate`**: 분석 결과 기반 문서 자동 생성 ⭐ **NEW**
+  - 7가지 문서 타입 지원: 개발 가이드, API 문서, 아키텍처 개요, 코드 리뷰 요약, 기술 명세서, 배포 가이드, 문제 해결 가이드
+  - 한국어/영어 지원
+  - 사용자 정의 프롬프트 지원
+  - 백그라운드 작업으로 비동기 처리
+- **`GET /api/v1/documents/status/{task_id}`**: 문서 생성 작업 상태 조회 ⭐ **NEW**
+  - 진행 상황 및 완료 여부 확인
+  - 생성된 문서 정보 제공
+- **`GET /api/v1/documents/types`**: 지원되는 문서 타입 목록 조회 ⭐ **NEW**
+- **`GET /api/v1/documents/list/{analysis_id}`**: 특정 분석의 생성된 문서 목록 조회 ⭐ **NEW**
+- **`DELETE /api/v1/documents/{analysis_id}/{document_type}`**: 생성된 문서 삭제 ⭐ **NEW**
+
 ### 🔍 벡터 검색 및 RAG
 - **`POST /api/v1/search`**: 벡터 유사도 검색
   - ChromaDB 기반 고성능 검색
   - 메타데이터 필터링 지원
+  - **analysis_id 기반 검색**: 특정 분석 결과만 검색 ⭐ **NEW**
   - 유사도 점수 및 컨텍스트 제공
 - **`GET /api/v1/stats`**: 임베딩 및 벡터 통계 정보
   - 총 문서 수, 벡터 차원, 컬렉션 정보
@@ -144,11 +171,25 @@ curl -X POST "http://localhost:8001/api/v1/analyze" \
     "include_correlation": true
   }'
 
-# 응답 예시:
+# 새로운 분석 응답 예시 (commit 변경 감지):
 # {
 #   "analysis_id": "3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c",
 #   "status": "started",
-#   "message": "분석이 시작되었습니다."
+#   "message": "분석이 시작되었습니다. /results/{analysis_id} 엔드포인트로 결과를 확인하세요."
+# }
+
+# 동일 commit 재사용 응답 예시 (NEW!):
+# {
+#   "analysis_id": "existing-analysis-id",
+#   "status": "existing",
+#   "message": "모든 레포지토리의 commit이 동일합니다. 기존 분석 결과를 사용합니다: existing-analysis-id"
+# }
+
+# commit 변경 감지 응답 예시 (NEW!):
+# {
+#   "analysis_id": "new-analysis-uuid",
+#   "status": "started", 
+#   "message": "레포지토리 commit이 변경되어 새로운 분석을 시작합니다. 기존: abc123, 최신: def456"
 # }
 ```
 
@@ -162,10 +203,43 @@ curl -X GET "http://localhost:8001/api/v1/results"
 curl -X GET "http://localhost:8001/api/v1/results/3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c"
 ```
 
+### 📄 문서 생성 테스트
+
+```bash
+# 지원되는 문서 타입 목록 조회
+curl -X GET "http://localhost:8001/api/v1/documents/types"
+
+# 문서 생성 시작 (분석 완료 후 사용 가능)
+curl -X POST "http://localhost:8001/api/v1/documents/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "analysis_id": "3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c",
+    "document_types": ["development_guide", "api_documentation"],
+    "language": "korean",
+    "custom_prompt": "FastAPI 관련 내용을 중심으로 작성해주세요."
+  }'
+
+# 문서 생성 응답 예시:
+# {
+#   "task_id": "doc-task-12345",
+#   "status": "pending",
+#   "message": "문서 생성이 시작되었습니다. /status/{task_id} 엔드포인트로 진행 상황을 확인하세요."
+# }
+
+# 문서 생성 상태 확인
+curl -X GET "http://localhost:8001/api/v1/documents/status/doc-task-12345"
+
+# 생성된 문서 목록 조회
+curl -X GET "http://localhost:8001/api/v1/documents/list/3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c"
+
+# 특정 문서 삭제
+curl -X DELETE "http://localhost:8001/api/v1/documents/3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c/development_guide"
+```
+
 ### 🔍 벡터 검색 테스트
 
 ```bash
-# 벡터 검색 (분석 완료 후 사용 가능)
+# 일반 벡터 검색 (분석 완료 후 사용 가능)
 curl -X POST "http://localhost:8001/api/v1/search" \
   -H "Content-Type: application/json" \
   -d '{
@@ -174,6 +248,15 @@ curl -X POST "http://localhost:8001/api/v1/search" \
     "filter_metadata": {
       "file_type": "python"
     }
+  }'
+
+# 특정 분석 결과에서만 검색 (NEW!)
+curl -X POST "http://localhost:8001/api/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Python 함수 정의",
+    "k": 5,
+    "analysis_id": "3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c"
   }'
 ```
 
@@ -201,7 +284,8 @@ python test_api.py
 1. **올바른 analysis_id 사용**: 분석 시작 시 반환된 정확한 analysis_id를 사용하고 있는지 확인
 2. **분석 상태 확인**: `/results` 엔드포인트로 사용 가능한 분석 결과 목록 확인
 3. **분석 완료 대기**: 분석이 완료될 때까지 충분히 기다린 후 결과 조회
-4. **서버 재시작**: 이제 분석 결과가 `output/results/` 디렉토리에 JSON 파일로 저장되어 서버 재시작 후에도 유지됩니다
+4. **Commit 변경 확인**: 같은 레포지토리라도 commit이 변경되면 새로운 analysis_id가 생성됩니다
+5. **서버 재시작**: 이제 분석 결과가 `output/results/` 디렉토리에 JSON 파일로 저장되어 서버 재시작 후에도 유지됩니다
 
 ### 개선된 에러 메시지
 
@@ -218,7 +302,8 @@ python test_api.py
       "1. 올바른 analysis_id를 사용하고 있는지 확인하세요.",
       "2. /results 엔드포인트로 사용 가능한 분석 결과 목록을 확인하세요.",
       "3. 분석이 아직 진행 중이거나 실패했을 수 있습니다.",
-      "4. 분석 ID 형식이 올바른지 확인하세요 (UUID 형식)."
+      "4. 같은 레포지토리라도 commit이 변경되면 새로운 analysis_id가 생성됩니다.",
+      "5. 분석 ID 형식이 올바른지 확인하세요 (UUID 형식)."
     ]
   }
 }

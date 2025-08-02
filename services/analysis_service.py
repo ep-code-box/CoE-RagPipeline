@@ -122,6 +122,89 @@ class RagRepositoryAnalysisService:
     """RAG 레포지토리 분석 결과 관리 서비스"""
     
     @staticmethod
+    def find_existing_repository_analysis(
+        db: Session,
+        repository_url: str,
+        branch: str = "main"
+    ) -> Optional[RepositoryAnalysis]:
+        """기존 레포지토리 분석 결과를 찾습니다."""
+        try:
+            # 같은 URL과 브랜치로 완료된 분석이 있는지 확인
+            return db.query(RepositoryAnalysis).filter(
+                RepositoryAnalysis.repository_url == repository_url,
+                RepositoryAnalysis.branch == branch,
+                RepositoryAnalysis.status == RepositoryStatus.COMPLETED
+            ).order_by(RepositoryAnalysis.updated_at.desc()).first()
+        except Exception as e:
+            logger.error(f"Failed to find existing repository analysis: {e}")
+            return None
+    
+    @staticmethod
+    def check_if_analysis_needed(
+        db: Session,
+        repository_url: str,
+        branch: str = "main",
+        latest_commit_hash: Optional[str] = None
+    ) -> tuple[bool, Optional[str]]:
+        """
+        분석이 필요한지 확인합니다.
+        
+        Returns:
+            tuple[bool, Optional[str]]: (분석 필요 여부, 기존 분석 ID)
+        """
+        try:
+            existing_analysis = RagRepositoryAnalysisService.find_existing_repository_analysis(
+                db, repository_url, branch
+            )
+            
+            if not existing_analysis:
+                # 기존 분석이 없으면 새로운 분석 필요
+                logger.info(f"No existing analysis found for {repository_url}:{branch}")
+                return True, None
+            
+            if not latest_commit_hash:
+                # commit hash를 확인할 수 없으면 기존 분석 재사용
+                logger.info(f"Cannot check commit hash, reusing existing analysis: {existing_analysis.analysis_id}")
+                return False, existing_analysis.analysis_id
+            
+            if not existing_analysis.commit_hash:
+                # 기존 분석에 commit hash가 없으면 새로운 분석 필요
+                logger.info(f"Existing analysis has no commit hash, new analysis needed for {repository_url}:{branch}")
+                return True, None
+            
+            if existing_analysis.commit_hash != latest_commit_hash:
+                # commit hash가 다르면 새로운 분석 필요
+                logger.info(f"Commit hash changed for {repository_url}:{branch} - "
+                          f"existing: {existing_analysis.commit_hash[:8]}, "
+                          f"latest: {latest_commit_hash[:8]}")
+                return True, None
+            
+            # commit hash가 같으면 기존 분석 재사용
+            logger.info(f"Same commit hash found, reusing existing analysis: {existing_analysis.analysis_id}")
+            return False, existing_analysis.analysis_id
+            
+        except Exception as e:
+            logger.error(f"Failed to check if analysis needed: {e}")
+            # 에러 발생 시 안전하게 새로운 분석 수행
+            return True, None
+    
+    @staticmethod
+    def get_analysis_by_repository_url(
+        db: Session,
+        repository_url: str,
+        branch: str = "main"
+    ) -> Optional[str]:
+        """레포지토리 URL로 최신 완료된 분석 ID를 조회합니다."""
+        try:
+            repo_analysis = RagRepositoryAnalysisService.find_existing_repository_analysis(
+                db, repository_url, branch
+            )
+            return repo_analysis.analysis_id if repo_analysis else None
+        except Exception as e:
+            logger.error(f"Failed to get analysis by repository URL: {e}")
+            return None
+    
+    @staticmethod
     def create_repository_analysis(
         db: Session,
         analysis_id: str,
@@ -186,7 +269,8 @@ class RagRepositoryAnalysisService:
         tech_specs: Optional[Dict[str, Any]] = None,
         code_metrics: Optional[Dict[str, Any]] = None,
         documentation_files: Optional[List[str]] = None,
-        config_files: Optional[List[str]] = None
+        config_files: Optional[List[str]] = None,
+        commit_info: Optional[Dict[str, Any]] = None
     ) -> Optional[RepositoryAnalysis]:
         """레포지토리 분석 결과를 저장합니다."""
         try:
@@ -204,6 +288,25 @@ class RagRepositoryAnalysisService:
             db_repo_analysis.code_metrics = code_metrics or {}
             db_repo_analysis.documentation_files = documentation_files or []
             db_repo_analysis.config_files = config_files or []
+            
+            # Commit 정보 저장
+            if commit_info:
+                db_repo_analysis.commit_hash = commit_info.get('commit_hash')
+                if commit_info.get('commit_date'):
+                    from datetime import datetime as dt
+                    # ISO 형식의 문자열을 datetime 객체로 변환
+                    commit_date_str = commit_info.get('commit_date')
+                    if isinstance(commit_date_str, str):
+                        try:
+                            # ISO 형식 파싱 (timezone 정보 포함)
+                            db_repo_analysis.commit_date = dt.fromisoformat(commit_date_str.replace('Z', '+00:00'))
+                        except ValueError:
+                            logger.warning(f"Failed to parse commit date: {commit_date_str}")
+                    else:
+                        db_repo_analysis.commit_date = commit_date_str
+                db_repo_analysis.commit_author = commit_info.get('author')
+                db_repo_analysis.commit_message = commit_info.get('message')
+            
             db_repo_analysis.status = RepositoryStatus.COMPLETED
             db_repo_analysis.updated_at = datetime.utcnow()
             
@@ -376,8 +479,44 @@ class AnalysisService:
                 
                 # 데이터베이스에 저장
                 try:
+                    # 먼저 기본 분석 결과 저장
                     save_analysis_to_db(analysis_result)
                     logger.info(f"Analysis {analysis_id} saved to database")
+                    
+                    # 각 레포지토리의 상세 분석 결과를 데이터베이스에 저장 (commit 정보 포함)
+                    with SessionLocal() as db:
+                        for repo in analysis_result.repositories:
+                            if hasattr(repo, 'commit_info') and repo.commit_info:
+                                try:
+                                    # 레포지토리 분석 레코드 생성
+                                    repo_analysis = RagRepositoryAnalysisService.create_repository_analysis(
+                                        db=db,
+                                        analysis_id=analysis_id,
+                                        repository_url=str(repo.repository.url),
+                                        repository_name=repo.repository.name,
+                                        branch=repo.repository.branch or "main",
+                                        clone_path=repo.clone_path
+                                    )
+                                    
+                                    # 분석 결과 저장 (commit 정보 포함)
+                                    languages = list(set(f.language for f in repo.files if f.language))
+                                    RagRepositoryAnalysisService.save_analysis_results(
+                                        db=db,
+                                        repo_analysis_id=repo_analysis.id,
+                                        files_count=len(repo.files),
+                                        lines_of_code=repo.code_metrics.lines_of_code if repo.code_metrics else 0,
+                                        languages=languages,
+                                        config_files=repo.config_files,
+                                        documentation_files=repo.documentation_files,
+                                        commit_info=repo.commit_info  # commit 정보 전달
+                                    )
+                                    
+                                    logger.info(f"Repository analysis saved with commit info: {repo.repository.url} - {repo.commit_info.get('commit_hash', 'unknown')[:8]}")
+                                    
+                                except Exception as repo_save_error:
+                                    logger.error(f"Failed to save repository analysis for {repo.repository.url}: {repo_save_error}")
+                                    continue
+                    
                 except Exception as e:
                     logger.error(f"Failed to save analysis {analysis_id} to database: {e}")
                     # 데이터베이스 저장 실패는 전체 분석 실패로 처리하지 않음
@@ -505,6 +644,10 @@ class AnalysisService:
                         git_repo = GitRepository(url=git_url, branch=branch, name=repo_name)
                         clone_path = git_analyzer.clone_repository(git_repo)
                         
+                        # 클론된 레포지토리에서 commit 정보 가져오기
+                        commit_info = git_analyzer.get_commit_info_from_cloned_repo(clone_path)
+                        logger.info(f"Retrieved commit info for {git_url}: {commit_info.get('commit_hash', 'unknown')[:8]}")
+                        
                         # 레포지토리 구조 분석
                         files = git_analyzer.analyze_repository_structure(clone_path)
                         
@@ -526,6 +669,9 @@ class AnalysisService:
                             config_files=config_files,
                             documentation_files=doc_files
                         )
+                        
+                        # commit 정보를 repo_analysis에 추가 (임시 저장)
+                        repo_analysis.commit_info = commit_info
                         
                         if analysis_id in analysis_results:
                             analysis_results[analysis_id].repositories.append(repo_analysis)

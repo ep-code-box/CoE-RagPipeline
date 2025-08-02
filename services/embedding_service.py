@@ -330,7 +330,7 @@ class EmbeddingService:
         
         return "\n".join(content_parts)
     
-    def search_similar_documents(self, query: str, k: int = 5, filter_metadata: Optional[Dict] = None) -> List[Dict]:
+    def search_similar_documents(self, query: str, k: int = 5, filter_metadata: Optional[Dict] = None, repository_url: Optional[str] = None) -> List[Dict]:
         """
         유사한 문서 검색
         
@@ -338,11 +338,19 @@ class EmbeddingService:
             query: 검색 쿼리
             k: 반환할 문서 수
             filter_metadata: 메타데이터 필터
+            repository_url: 특정 레포지토리 URL (최신 commit 분석 결과 우선 검색)
             
         Returns:
             유사한 문서들과 점수
         """
         try:
+            # 특정 레포지토리의 최신 commit 분석 결과를 우선 검색
+            if repository_url and not filter_metadata:
+                latest_analysis_id = self._get_latest_analysis_for_repository(repository_url)
+                if latest_analysis_id:
+                    filter_metadata = {"analysis_id": latest_analysis_id}
+                    logger.info(f"Searching with latest analysis for repository {repository_url}: {latest_analysis_id}")
+            
             # 필터 적용하여 검색
             if filter_metadata:
                 results = self.vectorstore.similarity_search_with_score(
@@ -363,6 +371,45 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"Failed to search documents: {e}")
             return []
+    
+    def _get_latest_analysis_for_repository(self, repository_url: str) -> Optional[str]:
+        """
+        특정 레포지토리의 최신 commit 분석 ID를 가져옵니다.
+        
+        Args:
+            repository_url: 레포지토리 URL
+            
+        Returns:
+            최신 분석 ID 또는 None
+        """
+        try:
+            from core.database import SessionLocal, RepositoryAnalysis, RepositoryStatus
+            
+            with SessionLocal() as db:
+                # 해당 레포지토리의 완료된 분석 중 최신 것을 가져오기 (commit_date 기준)
+                # MariaDB/MySQL에서는 NULLS LAST 대신 CASE WHEN을 사용
+                from sqlalchemy import case
+                latest_analysis = db.query(RepositoryAnalysis).filter(
+                    RepositoryAnalysis.repository_url == repository_url,
+                    RepositoryAnalysis.status == RepositoryStatus.COMPLETED
+                ).order_by(
+                    case(
+                        (RepositoryAnalysis.commit_date.is_(None), 1),
+                        else_=0
+                    ),  # NULL 값을 마지막으로
+                    RepositoryAnalysis.commit_date.desc(),  # commit_date가 있는 것을 우선
+                    RepositoryAnalysis.updated_at.desc()  # 그 다음은 업데이트 시간 기준
+                ).first()
+                
+                if latest_analysis:
+                    logger.info(f"Found latest analysis for {repository_url}: {latest_analysis.analysis_id} (commit: {latest_analysis.commit_hash[:8] if latest_analysis.commit_hash else 'unknown'})")
+                    return latest_analysis.analysis_id
+                
+                return None
+                
+        except Exception as e:
+            logger.error(f"Failed to get latest analysis for repository {repository_url}: {e}")
+            return None
     
     def get_collection_stats(self) -> Dict[str, Any]:
         """컬렉션 통계 정보 반환"""
