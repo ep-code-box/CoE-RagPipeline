@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 uvicorn_logger = logging.getLogger("uvicorn.access")
 uvicorn_logger.disabled = False  # uvicorn 로그는 유지
 
+# 루트 로거의 핸들러 중복 방지
+root_logger = logging.getLogger()
+if len(root_logger.handlers) > 1:
+    # 중복된 핸들러 제거 (첫 번째만 유지)
+    for handler in root_logger.handlers[1:]:
+        root_logger.removeHandler(handler)
+
 
 def create_app() -> FastAPI:
     """FastAPI 애플리케이션 생성 및 설정"""
