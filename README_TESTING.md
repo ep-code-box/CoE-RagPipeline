@@ -157,22 +157,6 @@ export DB_NAME=test_coe_db
 export OPENAI_API_KEY=test-api-key
 ```
 
-### 3. Pre-commit 훅 설정 (선택사항)
-
-Pre-commit 훅은 **선택사항**입니다. 코드 품질을 자동으로 관리하고 싶은 경우에만 설치하세요.
-
-```bash
-# Pre-commit 설정 파일 복사 (원하는 경우에만)
-cp .pre-commit-config.yaml.example .pre-commit-config.yaml
-
-# Pre-commit 훅 설치 (선택사항)
-make install-hooks
-
-# 수동으로 pre-commit 실행 (설치한 경우에만)
-pre-commit run --all-files
-```
-
-**참고**: Pre-commit 훅을 설치하지 않아도 프로젝트는 정상적으로 동작합니다.
 
 ## 📊 커버리지 리포트
 
