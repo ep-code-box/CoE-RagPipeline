@@ -28,12 +28,75 @@ Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석,
 
 ### 1. 환경 설정
 
+CoE-RagPipeline은 **통합 .env 파일**로 local과 docker 환경을 모두 지원합니다.
+
+#### 📋 환경 설정 파일
+
 ```bash
-# 가상 환경 활성화
-source .venv/bin/activate
+# 환경 설정 파일 생성
+cp .env.example .env
+# 또는 로컬 개발용
+cp .env.example .env.local
+```
+
+#### 🔑 필수 설정 항목
+
+```bash
+# SKAX API 설정 (메인 LLM용)
+SKAX_API_KEY=your_skax_api_key_here
+
+# OpenAI API 설정 (임베딩용)
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+#### 📊 환경별 설정 차이
+
+| 설정 항목 | 로컬 환경 (.env.local) | Docker 환경 (오버라이드) |
+|-----------|----------------------|-------------------------|
+| **데이터베이스** |
+| DB_HOST | localhost | mariadb |
+| DB_PORT | 6667 | 3306 |
+| **ChromaDB** |
+| CHROMA_HOST | localhost | chroma |
+| CHROMA_PORT | 6666 | 8000 |
+| **Redis** |
+| REDIS_HOST | localhost | redis |
+| REDIS_PORT | 6669 | 6379 |
+
+#### 🚀 로컬 개발 환경 설정
+
+##### run.sh 스크립트 활용 (권장)
+
+```bash
+# 1. 인프라 서비스만 Docker로 실행
+docker-compose -f ../docker-compose.local.yml up -d
+
+# 2. run.sh 스크립트로 실행 (.venv 자동 관리)
+./run.sh
+```
+
+`run.sh` 스크립트는 다음을 자동으로 수행합니다:
+- `.venv` 가상환경 자동 생성/활성화
+- `requirements.txt` 의존성 자동 설치
+- `.env.local` 환경변수 자동 로드
+- `python main.py` 서버 실행
+
+##### 수동 실행 방식
+
+```bash
+# 가상 환경 설정
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # 의존성 설치
 pip install -r requirements.txt
+
+# 환경 변수 설정
+cp .env.example .env.local
+# .env.local 파일에서 API 키 설정
+
+# 개발 서버 실행
+python main.py
 ```
 
 ### 2. 서버 실행
