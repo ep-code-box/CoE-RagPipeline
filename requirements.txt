@@ -44,3 +44,11 @@ colorama
 rich
 typer
 redis
+
+# 테스트 관련 의존성
+pytest
+pytest-asyncio
+pytest-mock
+pytest-cov
+httpx
+fakeredis
