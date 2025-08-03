@@ -22,4 +22,3 @@ output/
 *.swp
 .env.local
 .env.docker
-tests/
