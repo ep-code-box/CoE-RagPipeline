@@ -3,6 +3,7 @@ import json
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON, Float, ForeignKey, Enum, DECIMAL
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.dialects.mysql import LONGTEXT
 from datetime import datetime
 from dotenv import load_dotenv
 import enum
@@ -52,10 +53,10 @@ class RagAnalysisResult(Base):
     total_files = Column(Integer, default=0)
     total_lines_of_code = Column(Integer, default=0)
     
-    # 분석 결과 데이터 (JSON 형태로 저장)
-    repositories_data = Column(Text, nullable=True)  # RepositoryAnalysis 목록을 JSON으로 저장
-    correlation_data = Column(Text, nullable=True)   # CorrelationAnalysis를 JSON으로 저장
-    tech_specs_summary = Column(Text, nullable=True) # 기술스펙 요약을 JSON으로 저장
+    # 분석 결과 데이터 (JSON 형태로 저장) - LONGTEXT로 변경하여 대용량 데이터 지원
+    repositories_data = Column(LONGTEXT, nullable=True)  # RepositoryAnalysis 목록을 JSON으로 저장
+    correlation_data = Column(LONGTEXT, nullable=True)   # CorrelationAnalysis를 JSON으로 저장
+    tech_specs_summary = Column(LONGTEXT, nullable=True) # 기술스펙 요약을 JSON으로 저장
     
     # 메타데이터
     created_at = Column(DateTime, default=datetime.utcnow)

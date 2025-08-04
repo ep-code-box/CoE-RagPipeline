@@ -1,5 +1,9 @@
 import os
 from typing import Optional
+from dotenv import load_dotenv
+
+# .env 파일 로드 (프로젝트 루트에서)
+load_dotenv()
 
 
 class Settings:
@@ -21,6 +25,11 @@ class Settings:
     
     # OpenAI 설정
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    
+    # SKAX API 설정
+    SKAX_API_KEY: Optional[str] = os.getenv("SKAX_API_KEY")
+    SKAX_API_BASE: str = os.getenv("SKAX_API_BASE", "https://guest-api.sktax.chat/v1")
+    SKAX_MODEL_NAME: str = os.getenv("SKAX_MODEL_NAME", "ax4")
     
     # Git 설정
     GIT_TOKEN: Optional[str] = os.getenv("GIT_TOKEN")

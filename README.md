@@ -6,7 +6,10 @@ Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석,
 
 - **Git 레포지토리 분석**: 여러 Git 주소를 받아 소스코드를 자동으로 클론하고 분석
 - **스마트 레포지토리 분석**: 같은 레포지토리라도 commit 변경 시 새로운 분석 수행, commit이 동일하면 기존 결과 재사용으로 효율성 향상 ⭐ **NEW**
-- **AST 분석**: Python, JavaScript, Java, TypeScript 등 주요 언어의 추상 구문 트리 분석
+- **AST 분석**: Python, JavaScript, Java, TypeScript 등 주요 언어의 추상 구문 트리 분석 ⭐ **ENHANCED**
+  - **이중 분석 시스템**: Tree-sitter 기반 고정밀 분석 + 패턴 매칭 기반 fallback
+  - **향상된 JavaScript/TypeScript 지원**: 화살표 함수, 구조분해 할당, ES6+ 문법 지원
+  - **자동 fallback**: Tree-sitter 실패 시 기본 분석기로 자동 전환
 - **기술스펙 정적 분석**: 의존성, 프레임워크, 라이브러리, 코드 품질 메트릭 분석
 - **레포지토리간 연관도 분석**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
 - **문서 자동 수집**: doc 폴더, README, 참조 URL에서 개발 문서 자동 수집 및 분석

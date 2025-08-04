@@ -29,15 +29,28 @@ class FileInfo(BaseModel):
     size: int
     language: Optional[str] = None
     lines_of_code: Optional[int] = None
+    framework: Optional[str] = None  # 프레임워크 정보 추가
 
 
 class ASTNode(BaseModel):
+    """AST 노드 정보를 담는 모델"""
     type: str
     name: Optional[str] = None
     line_start: Optional[int] = None
     line_end: Optional[int] = None
     children: List['ASTNode'] = []
     metadata: Dict[str, Any] = {}
+
+    def to_dict(self) -> Dict[str, Any]:
+        """ASTNode를 딕셔너리로 변환"""
+        return {
+            "type": self.type,
+            "name": self.name,
+            "line_start": self.line_start,
+            "line_end": self.line_end,
+            "metadata": self.metadata,
+            "children": [child.to_dict() for child in self.children],
+        }
 
 
 class TechSpec(BaseModel):
@@ -53,6 +66,7 @@ class CodeMetrics(BaseModel):
     maintainability_index: Optional[float] = None
     lines_of_code: int = 0
     comment_ratio: Optional[float] = None
+    ast_metrics: Dict[str, Any] = {}
 
 
 class RepositoryAnalysis(BaseModel):
@@ -65,6 +79,7 @@ class RepositoryAnalysis(BaseModel):
     documentation_files: List[str] = []
     config_files: List[str] = []
     commit_info: Dict[str, Any] = {}
+    enhanced_analysis: Optional[Dict[str, Any]] = {}
 
 
 class CorrelationAnalysis(BaseModel):

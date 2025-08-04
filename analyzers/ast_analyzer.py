@@ -18,7 +18,8 @@ class ASTAnalyzer:
             'Python': self._analyze_python_ast,
             'JavaScript': self._analyze_javascript_ast,
             'TypeScript': self._analyze_typescript_ast,
-            'Java': self._analyze_java_ast
+            'Java': self._analyze_java_ast,
+            'Lua': self._analyze_lua_ast
         }
     
     def analyze_files(self, clone_path: str, files: List[FileInfo]) -> Dict[str, List[ASTNode]]:
@@ -87,7 +88,7 @@ class ASTAnalyzer:
             child_nodes = self._convert_python_ast_to_nodes(child, node_name or parent_name)
             ast_node.children.extend(child_nodes)
         
-        nodes.append(ast_node)
+        nodes.append(ast_node.to_dict())
         return nodes
     
     def _get_python_node_name(self, node: ast.AST) -> Optional[str]:
@@ -151,49 +152,87 @@ class ASTAnalyzer:
             return str(node)
     
     def _analyze_javascript_ast(self, file_path: str) -> List[ASTNode]:
-        """JavaScript 파일의 AST 분석 (기본 구현)"""
-        # 실제 구현에서는 tree-sitter나 다른 JavaScript 파서를 사용
+        """JavaScript 파일의 AST 분석 (개선된 패턴 매칭)"""
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            # 간단한 패턴 매칭으로 기본 구조 추출
             nodes = []
             lines = content.split('\n')
             
             for i, line in enumerate(lines, 1):
                 line = line.strip()
                 
-                # 함수 선언 감지
-                if line.startswith('function ') or 'function(' in line:
+                # 함수 선언 감지 (다양한 패턴)
+                if (line.startswith('function ') or 'function(' in line or 
+                    '=>' in line or line.startswith('const ') and '=>' in line or
+                    line.startswith('let ') and '=>' in line or
+                    line.startswith('var ') and '=>' in line):
                     func_name = self._extract_js_function_name(line)
                     if func_name:
                         nodes.append(ASTNode(
                             type='FunctionDeclaration',
                             name=func_name,
                             line_start=i,
-                            metadata={'language': 'JavaScript'}
+                            metadata={
+                                'language': 'JavaScript',
+                                'is_arrow_function': '=>' in line,
+                                'is_const': line.startswith('const '),
+                                'raw_line': line
+                            }
                         ))
                 
                 # 클래스 선언 감지
                 elif line.startswith('class '):
-                    class_name = line.split()[1].split('(')[0].split('{')[0]
+                    class_name = line.split()[1].split('(')[0].split('{')[0].split(' extends')[0]
                     nodes.append(ASTNode(
                         type='ClassDeclaration',
                         name=class_name,
                         line_start=i,
-                        metadata={'language': 'JavaScript'}
+                        metadata={
+                            'language': 'JavaScript',
+                            'has_extends': 'extends' in line,
+                            'raw_line': line
+                        }
                     ))
                 
-                # import/export 감지
-                elif line.startswith('import ') or line.startswith('export '):
+                # import/export 감지 (개선된 패턴)
+                elif (line.startswith('import ') or line.startswith('export ') or
+                      'require(' in line):
+                    import_type = 'ImportDeclaration'
+                    if line.startswith('export'):
+                        import_type = 'ExportDeclaration'
+                    elif 'require(' in line:
+                        import_type = 'RequireDeclaration'
+                    
                     nodes.append(ASTNode(
-                        type='ImportDeclaration' if line.startswith('import') else 'ExportDeclaration',
+                        type=import_type,
                         name=line,
                         line_start=i,
-                        metadata={'language': 'JavaScript'}
+                        metadata={
+                            'language': 'JavaScript',
+                            'is_require': 'require(' in line,
+                            'raw_line': line
+                        }
                     ))
+                
+                # 변수 선언 감지
+                elif (line.startswith('const ') or line.startswith('let ') or 
+                      line.startswith('var ')):
+                    var_name = self._extract_js_variable_name(line)
+                    if var_name:
+                        nodes.append(ASTNode(
+                            type='VariableDeclaration',
+                            name=var_name,
+                            line_start=i,
+                            metadata={
+                                'language': 'JavaScript',
+                                'declaration_type': line.split()[0],
+                                'raw_line': line
+                            }
+                        ))
             
+            logger.info(f"JavaScript AST analysis completed for {file_path}: {len(nodes)} nodes found")
             return nodes
             
         except Exception as e:
@@ -201,13 +240,48 @@ class ASTAnalyzer:
             return []
     
     def _extract_js_function_name(self, line: str) -> Optional[str]:
-        """JavaScript 함수 이름 추출"""
+        """JavaScript 함수 이름 추출 (개선된 버전)"""
         try:
+            # 일반 함수 선언
             if 'function ' in line:
                 parts = line.split('function ')
                 if len(parts) > 1:
                     name_part = parts[1].split('(')[0].strip()
-                    return name_part if name_part else None
+                    return name_part if name_part else 'anonymous'
+            
+            # 화살표 함수 (const/let/var name = () => {})
+            elif '=>' in line and ('const ' in line or 'let ' in line or 'var ' in line):
+                for keyword in ['const ', 'let ', 'var ']:
+                    if line.startswith(keyword):
+                        after_keyword = line[len(keyword):].strip()
+                        name_part = after_keyword.split('=')[0].strip()
+                        return name_part if name_part else 'anonymous'
+            
+            # 메서드 선언 (객체 내부)
+            elif ':' in line and 'function' in line:
+                name_part = line.split(':')[0].strip()
+                return name_part if name_part else 'anonymous'
+            
+            return None
+        except:
+            return None
+    
+    def _extract_js_variable_name(self, line: str) -> Optional[str]:
+        """JavaScript 변수 이름 추출"""
+        try:
+            for keyword in ['const ', 'let ', 'var ']:
+                if line.startswith(keyword):
+                    after_keyword = line[len(keyword):].strip()
+                    # 구조 분해 할당이나 복잡한 패턴 처리
+                    if '=' in after_keyword:
+                        var_part = after_keyword.split('=')[0].strip()
+                        # 배열이나 객체 구조분해 할당 처리
+                        if var_part.startswith('[') or var_part.startswith('{'):
+                            return var_part  # 전체 패턴 반환
+                        else:
+                            return var_part.split(',')[0].strip()  # 첫 번째 변수만
+                    else:
+                        return after_keyword.split(',')[0].strip()
             return None
         except:
             return None
@@ -315,3 +389,109 @@ class ASTAnalyzer:
                 summary['node_types'][node.type] += 1
         
         return summary
+    
+    def _analyze_lua_ast(self, file_path: str) -> List[ASTNode]:
+        """Lua 파일의 AST 분석 (기본적인 패턴 매칭 기반)"""
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                source_code = f.read()
+            
+            nodes = []
+            lines = source_code.split('\n')
+            
+            for line_num, line in enumerate(lines, 1):
+                line = line.strip()
+                if not line or line.startswith('--'):  # 빈 줄이나 주석 제외
+                    continue
+                
+                # 함수 정의 감지
+                if line.startswith('function ') or ' function ' in line:
+                    func_name = self._extract_lua_function_name(line)
+                    if func_name:
+                        node = ASTNode(
+                            type='function',
+                            name=func_name,
+                            line_start=line_num,
+                            line_end=line_num,
+                            metadata={'language': 'Lua', 'raw_line': line}
+                        )
+                        nodes.append(node)
+                
+                # Love2D 콜백 함수 감지
+                elif any(callback in line for callback in ['love.load', 'love.update', 'love.draw', 'love.keypressed']):
+                    callback_name = self._extract_love2d_callback(line)
+                    if callback_name:
+                        node = ASTNode(
+                            type='love2d_callback',
+                            name=callback_name,
+                            line_start=line_num,
+                            line_end=line_num,
+                            metadata={'language': 'Lua', 'framework': 'Love2D', 'raw_line': line}
+                        )
+                        nodes.append(node)
+                
+                # 변수 할당 감지
+                elif '=' in line and not line.startswith('if') and not line.startswith('while'):
+                    var_name = self._extract_lua_variable_name(line)
+                    if var_name:
+                        node = ASTNode(
+                            type='variable',
+                            name=var_name,
+                            line_start=line_num,
+                            line_end=line_num,
+                            metadata={'language': 'Lua', 'raw_line': line}
+                        )
+                        nodes.append(node)
+            
+            logger.info(f"Extracted {len(nodes)} AST nodes from Lua file: {file_path}")
+            return nodes
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze Lua AST for {file_path}: {e}")
+            return []
+    
+    def _extract_lua_function_name(self, line: str) -> Optional[str]:
+        """Lua 함수 이름 추출"""
+        try:
+            # function name(...) 패턴
+            if line.startswith('function '):
+                parts = line.split('(')[0].split()
+                if len(parts) >= 2:
+                    return parts[1]
+            # local function name(...) 패턴
+            elif 'local function ' in line:
+                parts = line.split('local function ')[1].split('(')[0].strip()
+                return parts
+            # name = function(...) 패턴
+            elif ' = function' in line:
+                parts = line.split(' = function')[0].strip()
+                return parts.split()[-1]
+            return None
+        except:
+            return None
+    
+    def _extract_love2d_callback(self, line: str) -> Optional[str]:
+        """Love2D 콜백 함수 이름 추출"""
+        try:
+            love2d_callbacks = ['love.load', 'love.update', 'love.draw', 'love.keypressed', 
+                               'love.keyreleased', 'love.mousepressed', 'love.mousereleased']
+            for callback in love2d_callbacks:
+                if callback in line:
+                    return callback
+            return None
+        except:
+            return None
+    
+    def _extract_lua_variable_name(self, line: str) -> Optional[str]:
+        """Lua 변수 이름 추출"""
+        try:
+            if '=' in line:
+                var_part = line.split('=')[0].strip()
+                # local 키워드 제거
+                if var_part.startswith('local '):
+                    var_part = var_part[6:].strip()
+                # 첫 번째 단어만 반환 (복합 할당 제외)
+                return var_part.split()[0] if var_part else None
+            return None
+        except:
+            return None
