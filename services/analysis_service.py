@@ -568,37 +568,62 @@ class AnalysisService:
                 logger.error("No repositories provided for analysis")
                 raise ValueError("No repositories provided for analysis")
             
+            # 실제 Git 분석기 사용
+            git_analyzer = GitAnalyzer()
+            
             # Git 분석 로직 구현
             for repo_info in request.repositories:
                 try:
                     # GitRepository 객체의 속성에 접근
                     git_url = str(repo_info.url)  # HttpUrl을 문자열로 변환
-                    branch = repo_info.branch if hasattr(repo_info, 'branch') else "main"  # branch가 없으면 기본값 "main" 사용
-                    repo_name = repo_info.name if hasattr(repo_info, 'name') else None  # name이 없으면 None
-                    
+                    branch = repo_info.branch or "main"  # branch가 없으면 기본값 "main" 사용
+                    repo_name = repo_info.name  # name이 없어도 괜찮음
+
                     if not git_url:  # URL이 비어있으면 건너뛰기
                         logger.warning(f"Empty repository URL found, skipping")
                         continue
+
+                    logger.info(f"Cloning Git repository: {git_url} (branch: {branch})")
                     
-                    logger.info(f"Analyzing Git repository: {git_url} (branch: {branch})")
+                    # 실제 Git 클론 수행
+                    from models.schemas import GitRepository
+                    git_repo = GitRepository(url=git_url, branch=branch, name=repo_name)
+                    clone_path = git_analyzer.clone_repository(git_repo)
                     
-                    # 임시 분석 결과 (실제 구현 시 대체)
-                    repo_analysis = {
-                        "git_url": git_url,
-                        "branch": branch,
-                        "name": repo_name,
-                        "total_files": 100,  # 실제 파일 수로 대체
-                        "total_lines": 5000,  # 실제 라인 수로 대체
-                        "languages": ["Python", "JavaScript"],  # 실제 언어 분석 결과로 대체
-                        "last_commit": "2024-01-01",  # 실제 마지막 커밋 날짜로 대체
-                    }
+                    # 클론된 레포지토리에서 commit 정보 가져오기
+                    commit_info = git_analyzer.get_commit_info_from_cloned_repo(clone_path)
+                    
+                    # 파일 분석 수행
+                    files = git_analyzer.analyze_files(clone_path)
+                    
+                    # 코드 메트릭 계산
+                    code_metrics = git_analyzer.calculate_code_metrics(files)
+                    
+                    # 설정 파일 및 문서 파일 찾기
+                    config_files = git_analyzer.find_config_files(clone_path)
+                    documentation_files = git_analyzer.find_documentation_files(clone_path)
+                    
+                    # 레포지토리 분석 결과 생성
+                    from models.schemas import RepositoryAnalysis, CodeMetrics
+                    
+                    repo_analysis = RepositoryAnalysis(
+                        repository=git_repo,
+                        clone_path=clone_path,
+                        files=files,
+                        code_metrics=code_metrics,
+                        config_files=config_files,
+                        documentation_files=documentation_files,
+                        commit_info=commit_info,
+                        tech_specs=[],  # 기술스펙 분석에서 채워짐
+                        ast_analysis={}  # AST 분석에서 채워짐
+                    )
                     
                     if analysis_id in analysis_results:
                         analysis_results[analysis_id].repositories.append(repo_analysis)
-                        logger.info(f"Added analysis results for repository: {git_url}")
+                        logger.info(f"Added analysis results for repository: {git_url} ({len(files)} files, {code_metrics.lines_of_code} lines)")
                 
                 except Exception as e:
-                    logger.error(f"Error processing repository: {str(e)}")
+                    logger.error(f"Error processing repository {git_url}: {str(e)}")
                     continue
                         
         except Exception as e:
@@ -996,10 +1021,21 @@ class AnalysisService:
             raise
     
     def load_analysis_result(self, analysis_id: str):
-        """디스크에서 분석 결과를 로드합니다 (백워드 호환성)."""
+        """분석 결과를 로드합니다 (데이터베이스 우선, JSON 파일 백워드 호환성)."""
         import os
         from models.schemas import AnalysisResult
         
+        # 먼저 데이터베이스에서 로드 시도
+        try:
+            with SessionLocal() as db:
+                db_result = self.load_analysis_result_from_db(analysis_id, db)
+                if db_result:
+                    logger.info(f"Analysis result loaded from database: {analysis_id}")
+                    return db_result
+        except Exception as e:
+            logger.warning(f"Failed to load analysis result from database: {e}")
+        
+        # 데이터베이스에서 로드 실패 시 JSON 파일에서 로드 시도 (백워드 호환성)
         try:
             output_dir = "output/results"
             filepath = os.path.join(output_dir, f"{analysis_id}.json")
@@ -1012,10 +1048,13 @@ class AnalysisService:
                 if 'source_summaries_used' not in data:
                     data['source_summaries_used'] = False
                 
+                logger.info(f"Analysis result loaded from JSON file: {analysis_id}")
                 return AnalysisResult(**data)
+            
+            logger.warning(f"Analysis result not found in database or JSON file: {analysis_id}")
             return None
         except Exception as e:
-            print(f"Error loading analysis result from disk: {e}")
+            logger.error(f"Error loading analysis result from disk: {e}")
             return None
     
     def load_analysis_result_from_db(self, analysis_id: str, db: Session):
@@ -1029,20 +1068,56 @@ class AnalysisService:
             ).first()
             
             if db_result:
+                # 저장소 데이터 파싱
+                repositories_data = []
+                if db_result.repositories_data:
+                    try:
+                        repositories_data = json.loads(db_result.repositories_data)
+                        logger.debug(f"Loaded {len(repositories_data)} repositories from database for analysis {analysis_id}")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse repositories_data for analysis {analysis_id}: {e}")
+                        repositories_data = []
+                
+                # 연관성 분석 데이터 파싱
+                correlation_analysis = None
+                if db_result.correlation_data:
+                    try:
+                        correlation_analysis = json.loads(db_result.correlation_data)
+                        logger.debug(f"Loaded correlation analysis from database for analysis {analysis_id}")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse correlation_data for analysis {analysis_id}: {e}")
+                
+                # 상태 값 변환 (데이터베이스의 enum과 스키마의 enum 매핑)
+                status_mapping = {
+                    'PENDING': 'pending',
+                    'RUNNING': 'running', 
+                    'COMPLETED': 'completed',
+                    'FAILED': 'failed'
+                }
+                
+                # 데이터베이스 상태를 스키마 상태로 변환
+                db_status = db_result.status.value if hasattr(db_result.status, 'value') else str(db_result.status)
+                schema_status = status_mapping.get(db_status, db_status.lower())
+                
                 # 데이터베이스 결과를 AnalysisResult 모델로 변환
-                return AnalysisResult(
+                result = AnalysisResult(
                     analysis_id=db_result.analysis_id,
-                    status=AnalysisStatus(db_result.status),
+                    status=AnalysisStatus(schema_status),
                     created_at=db_result.analysis_date,
                     completed_at=db_result.completed_at,
-                    repositories=json.loads(db_result.repositories_data) if db_result.repositories_data else [],
-                    correlation_analysis=json.loads(db_result.correlation_data) if db_result.correlation_data else None,
+                    repositories=repositories_data,
+                    correlation_analysis=correlation_analysis,
                     error_message=db_result.error_message,
                     source_summaries_used=False  # 기존 데이터는 소스 요약을 사용하지 않았으므로 False로 설정
                 )
+                
+                logger.info(f"Successfully loaded analysis result from database: {analysis_id} with {len(repositories_data)} repositories")
+                return result
+            
+            logger.warning(f"No analysis result found in database for analysis_id: {analysis_id}")
             return None
         except Exception as e:
-            print(f"Error loading analysis result from database: {e}")
+            logger.error(f"Error loading analysis result from database for {analysis_id}: {e}")
             return None
     
     def get_all_analysis_results_from_db(self, db: Session):
