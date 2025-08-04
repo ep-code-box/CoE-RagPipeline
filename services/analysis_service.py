@@ -594,7 +594,7 @@ class AnalysisService:
                     commit_info = git_analyzer.get_commit_info_from_cloned_repo(clone_path)
                     
                     # 파일 분석 수행
-                    files = git_analyzer.analyze_files(clone_path)
+                    files = git_analyzer.analyze_repository_structure(clone_path)
                     
                     # 코드 메트릭 계산
                     code_metrics = git_analyzer.calculate_code_metrics(files)
@@ -638,82 +638,6 @@ class AnalysisService:
                 analysis_results[analysis_id].status = AnalysisStatus.FAILED
                 analysis_results[analysis_id].error_message = str(e)
                 analysis_results[analysis_id].completed_at = datetime.now()
-    
-    async def _perform_git_analysis(self, analysis_id: str, request, analysis_results: dict):
-        """Git 분석 수행"""
-        try:
-            logger.info(f"Performing Git analysis for {analysis_id}")
-            
-            if not hasattr(request, 'repositories') or not request.repositories:
-                logger.error("No repositories provided for analysis")
-                raise ValueError("No repositories provided for analysis")
-            
-            # 실제 Git 분석기 사용
-            git_analyzer = GitAnalyzer()
-            
-            try:
-                # Git 분석 로직 구현
-                for repo_info in request.repositories:
-                    try:
-                        # GitRepository 객체의 속성에 접근
-                        git_url = str(repo_info.url)  # HttpUrl을 문자열로 변환
-                        branch = repo_info.branch or "main"  # branch가 없으면 기본값 "main" 사용
-                        repo_name = repo_info.name  # name이 없어도 괜찮음
-
-                        if not git_url:  # URL이 비어있으면 건너뛰기
-                            logger.warning(f"Empty repository URL found, skipping")
-                            continue
-
-                        logger.info(f"Cloning Git repository: {git_url} (branch: {branch})")
-                        
-                        # 실제 Git 클론 수행
-                        from models.schemas import GitRepository
-                        git_repo = GitRepository(url=git_url, branch=branch, name=repo_name)
-                        clone_path = git_analyzer.clone_repository(git_repo)
-                        
-                        # 클론된 레포지토리에서 commit 정보 가져오기
-                        commit_info = git_analyzer.get_commit_info_from_cloned_repo(clone_path)
-                        logger.info(f"Retrieved commit info for {git_url}: {commit_info.get('commit_hash', 'unknown')[:8]}")
-                        
-                        # 레포지토리 구조 분석
-                        files = git_analyzer.analyze_repository_structure(clone_path)
-                        
-                        # 설정 파일 찾기
-                        config_files = git_analyzer.find_config_files(clone_path)
-                        
-                        # 문서 파일 찾기
-                        doc_files = git_analyzer.find_documentation_files(clone_path)
-                        
-                        # 실제 분석 결과 생성
-                        from models.schemas import RepositoryAnalysis, CodeMetrics
-                        repo_analysis = RepositoryAnalysis(
-                            repository=git_repo,
-                            clone_path=clone_path,
-                            files=files,
-                            code_metrics=CodeMetrics(
-                                lines_of_code=sum(f.lines_of_code or 0 for f in files)
-                            ),
-                            config_files=config_files,
-                            documentation_files=doc_files
-                        )
-                        
-                        # commit 정보를 repo_analysis에 추가 (임시 저장)
-                        repo_analysis.commit_info = commit_info
-                        
-                        if analysis_id in analysis_results:
-                            analysis_results[analysis_id].repositories.append(repo_analysis)
-                            logger.info(f"Added analysis results for repository: {git_url} ({len(files)} files)")
-                    
-                    except Exception as e:
-                        logger.error(f"Error processing repository {git_url}: {str(e)}")
-                        continue
-            finally:
-                # 분석 완료 후 정리
-                git_analyzer.cleanup()
-                        
-        except Exception as e:
-            logger.error(f"Git analysis failed for {analysis_id}: {e}")
-            raise
     
     async def _perform_ast_analysis(self, analysis_id: str, request, analysis_results: dict):
         """AST 분석 수행"""
@@ -1030,7 +954,7 @@ class AnalysisService:
             with SessionLocal() as db:
                 db_result = self.load_analysis_result_from_db(analysis_id, db)
                 if db_result:
-                    logger.info(f"Analysis result loaded from database: {analysis_id}")
+                    logger.info(f"Analysis result loaded from database: {analysis_id} with {len(db_result.repositories)} repositories")
                     return db_result
         except Exception as e:
             logger.warning(f"Failed to load analysis result from database: {e}")
@@ -1073,10 +997,13 @@ class AnalysisService:
                 if db_result.repositories_data:
                     try:
                         repositories_data = json.loads(db_result.repositories_data)
-                        logger.debug(f"Loaded {len(repositories_data)} repositories from database for analysis {analysis_id}")
+                        logger.debug(f"Raw repositories_data from DB: {db_result.repositories_data}")
+                        logger.debug(f"Parsed {len(repositories_data)} repositories from database for analysis {analysis_id}")
                     except json.JSONDecodeError as e:
                         logger.error(f"Failed to parse repositories_data for analysis {analysis_id}: {e}")
                         repositories_data = []
+                else:
+                    logger.warning(f"repositories_data is None or empty for analysis {analysis_id}")
                 
                 # 연관성 분석 데이터 파싱
                 correlation_analysis = None

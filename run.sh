@@ -44,7 +44,7 @@ pip install -r requirements.txt
 
 # .env 파일 로드 및 서버 실행
 echo "🌍 환경변수 로드: .env"
-echo "🎯 서버 실행 중... (http://localhost:8000)"
+echo "🎯 서버 실행 중... (http://localhost:8001)"
 echo "⏹️  서버 중지: Ctrl+C"
 echo ""
 
