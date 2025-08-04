@@ -5,14 +5,10 @@
 
 set -e  # 에러 발생 시 스크립트 중단
 
-PROJECT_DIR="/Users/lastep/Documents/Code/CoE/CoE-RagPipeline"
-VENV_DIR="$PROJECT_DIR/.venv"
-ENV_FILE="$PROJECT_DIR/.env"
+VENV_DIR="./.venv"
+ENV_FILE="./.env"
 
 echo "🚀 CoE-RagPipeline 서버 시작 중..."
-
-# 프로젝트 디렉토리로 이동
-cd "$PROJECT_DIR"
 
 # .env 파일 존재 확인
 if [ ! -f "$ENV_FILE" ]; then
