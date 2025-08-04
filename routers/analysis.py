@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
 from datetime import datetime
 import uuid
 import logging
@@ -10,6 +10,7 @@ from models.schemas import (
     AnalysisResult, 
     AnalysisStatus
 )
+from analyzers.git_analyzer import GitAnalyzer
 from core.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,45 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
         # 새로운 분석이 필요한 경우
         analysis_id = str(uuid.uuid4())
         
-        # 분석 결과 초기화
+        # 새로운 레포지토리만 포함하는 요청 생성
+        if new_repositories:
+            new_request = AnalysisRequest(
+                repositories=new_repositories,
+                include_ast=request.include_ast,
+                include_tech_spec=request.include_tech_spec,
+                include_correlation=request.include_correlation
+            )
+        else:
+            new_request = request
+        
+        # 데이터베이스에 AnalysisRequest 레코드 생성 (foreign key constraint를 위해 필요)
+        from services.analysis_service import RagAnalysisService
+        try:
+            # 레포지토리 정보를 딕셔너리 형태로 변환
+            repositories_data = []
+            for repo in new_request.repositories:
+                repositories_data.append({
+                    "url": str(repo.url),
+                    "branch": repo.branch or "main",
+                    "name": repo.name
+                })
+            
+            # 데이터베이스에 AnalysisRequest 생성
+            db_analysis_request = RagAnalysisService.create_analysis_request(
+                db=db,
+                repositories=repositories_data,
+                include_ast=new_request.include_ast,
+                include_tech_spec=new_request.include_tech_spec,
+                include_correlation=new_request.include_correlation,
+                analysis_id=analysis_id
+            )
+            logger.info(f"Created AnalysisRequest in database: {analysis_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create AnalysisRequest in database: {e}")
+            raise HTTPException(status_code=500, detail=f"데이터베이스에 분석 요청을 생성하는 중 오류가 발생했습니다: {str(e)}")
+        
+        # 분석 결과 초기화 (메모리 캐시용)
         analysis_result = AnalysisResult(
             analysis_id=analysis_id,
             status=AnalysisStatus.PENDING,
@@ -136,17 +175,6 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
         
         # 메모리 캐시에 저장
         analysis_results[analysis_id] = analysis_result
-        
-        # 새로운 레포지토리만 포함하는 요청 생성
-        if new_repositories:
-            new_request = AnalysisRequest(
-                repositories=new_repositories,
-                include_ast=request.include_ast,
-                include_tech_spec=request.include_tech_spec,
-                include_correlation=request.include_correlation
-            )
-        else:
-            new_request = request
         
         # 백그라운드에서 분석 실행 (데이터베이스 세션도 전달)
         analysis_service = AnalysisService()
@@ -254,3 +282,31 @@ async def list_analysis_results(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Failed to list analysis results: {e}")
         raise HTTPException(status_code=500, detail=f"분석 결과 목록 조회 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.get("/cache/stats", summary="캐시 통계 조회", description="Git 레포지토리 캐시 디렉토리의 통계 정보를 조회합니다.")
+async def get_cache_stats() -> Dict[str, Any]:
+    """Git 레포지토리 캐시 통계 정보 조회"""
+    try:
+        git_analyzer = GitAnalyzer()
+        stats = git_analyzer.get_cache_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get cache stats: {e}")
+        raise HTTPException(status_code=500, detail=f"캐시 통계 조회 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.post("/cache/cleanup", summary="캐시 정리", description="오래된 Git 레포지토리 캐시를 정리합니다.")
+async def cleanup_cache(max_age_hours: int = 24) -> Dict[str, Any]:
+    """오래된 Git 레포지토리 캐시 정리"""
+    try:
+        git_analyzer = GitAnalyzer()
+        cleaned_count = git_analyzer.cleanup_old_repositories(max_age_hours)
+        return {
+            "message": f"캐시 정리 완료",
+            "cleaned_repositories": cleaned_count,
+            "max_age_hours": max_age_hours
+        }
+    except Exception as e:
+        logger.error(f"Failed to cleanup cache: {e}")
+        raise HTTPException(status_code=500, detail=f"캐시 정리 중 오류가 발생했습니다: {str(e)}")

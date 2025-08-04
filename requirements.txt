@@ -26,6 +26,7 @@ tree-sitter-python
 tree-sitter-javascript
 tree-sitter-java
 tree-sitter-typescript
+tree-sitter-lua
 
 # 정적 분석 도구들
 bandit

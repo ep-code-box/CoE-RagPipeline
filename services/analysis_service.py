@@ -9,6 +9,7 @@ from datetime import datetime
 # 실제 분석기 import 추가
 from analyzers.git_analyzer import GitAnalyzer
 from analyzers.ast_analyzer import ASTAnalyzer
+from analyzers.enhanced import EnhancedAnalyzer, TreeSitterAnalyzer
 
 # LLM 서비스 import 추가
 from services.llm_service import LLMDocumentService, DocumentType as LLMDocumentType
@@ -447,6 +448,9 @@ class AnalysisService:
         from core.database import save_analysis_to_db
         
         logger.info(f"Starting analysis for {analysis_id}")
+        
+        # Git 분석기 인스턴스를 메서드 전체에서 사용하기 위해 여기서 초기화
+        git_analyzer = None
 
         try:
             # 분석 상태 확인 및 업데이트
@@ -463,7 +467,7 @@ class AnalysisService:
             try:
                 # Git 분석 수행
                 logger.info(f"Starting Git analysis for {analysis_id}")
-                await self._perform_git_analysis(analysis_id, request, analysis_results)
+                git_analyzer = await self._perform_git_analysis(analysis_id, request, analysis_results)
                 
                 # AST 분석 수행 (요청된 경우)
                 if hasattr(request, 'include_ast') and request.include_ast:
@@ -558,6 +562,14 @@ class AnalysisService:
                 except Exception as save_error:
                     logger.error(f"Failed to save failed analysis to database: {save_error}")
             raise
+        finally:
+            # 모든 분석이 완료된 후 클론된 레포지토리 정리
+            if git_analyzer:
+                try:
+                    git_analyzer.cleanup()
+                    logger.info(f"Cleaned up cloned repositories for analysis {analysis_id}")
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup repositories for analysis {analysis_id}: {cleanup_error}")
 
     async def _perform_git_analysis(self, analysis_id: str, request, analysis_results: dict):
         """Git 분석 수행"""
@@ -626,21 +638,16 @@ class AnalysisService:
                     logger.error(f"Error processing repository {git_url}: {str(e)}")
                     continue
                         
+            # Git 분석 완료 후 git_analyzer 인스턴스를 반환하여 나중에 cleanup할 수 있도록 함
+            return git_analyzer
+                        
         except Exception as e:
             logger.error(f"Git analysis failed for {analysis_id}: {e}")
-            raise
-            
-        except Exception as e:
-            logger.error(f"Analysis {analysis_id} failed: {e}")
-            
-            # 분석 실패 상태로 변경
-            if analysis_id in analysis_results:
-                analysis_results[analysis_id].status = AnalysisStatus.FAILED
-                analysis_results[analysis_id].error_message = str(e)
-                analysis_results[analysis_id].completed_at = datetime.now()
+            # 에러 발생 시에도 git_analyzer를 반환하여 cleanup이 가능하도록 함
+            return git_analyzer if 'git_analyzer' in locals() else None
     
     async def _perform_ast_analysis(self, analysis_id: str, request, analysis_results: dict):
-        """AST 분석 수행"""
+        """AST 분석 수행 - Enhanced Analyzer 우선 사용, 실패 시 기본 Analyzer로 fallback"""
         try:
             if not request.include_ast:
                 logger.info(f"AST analysis skipped for {analysis_id}")
@@ -649,8 +656,9 @@ class AnalysisService:
             logger.info(f"Performing AST analysis for {analysis_id}")
         
             if analysis_id in analysis_results and analysis_results[analysis_id].repositories:
-                # 실제 AST 분석기 사용
-                ast_analyzer = ASTAnalyzer()
+                # Enhanced Analyzer 초기화 (Tree-sitter 포함)
+                enhanced_analyzer = EnhancedAnalyzer()
+                basic_ast_analyzer = ASTAnalyzer()
                 
                 updated_repositories = []
                 for repo in analysis_results[analysis_id].repositories:
@@ -660,17 +668,62 @@ class AnalysisService:
                             logger.warning(f"Invalid repository object for AST analysis: {repo}")
                             continue
                         
-                        logger.info(f"Performing AST analysis for repository: {repo.repository.url}")
+                        logger.info(f"Performing enhanced AST analysis for repository: {repo.repository.url}")
                         
-                        # 실제 AST 분석 수행
-                        ast_results = ast_analyzer.analyze_files(repo.clone_path, repo.files)
+                        ast_results = {}
+                        enhanced_results = {}
+                        
+                        # 1. Enhanced Analyzer 시도 (Tree-sitter 기반)
+                        try:
+                            if enhanced_analyzer.capabilities['tree_sitter']:
+                                logger.info(f"Using Tree-sitter for enhanced AST analysis: {repo.repository.url}")
+                                enhanced_analysis = enhanced_analyzer.analyze_repository(
+                                    clone_path=repo.clone_path,
+                                    files=repo.files,
+                                    include_tree_sitter=True,
+                                    include_static_analysis=False,  # AST만 수행
+                                    include_dependency_analysis=False
+                                )
+                                
+                                if enhanced_analysis.get('tree_sitter_results'):
+                                    ast_results = enhanced_analysis['tree_sitter_results']
+                                    enhanced_results = enhanced_analysis
+                                    logger.info(f"Enhanced AST analysis successful: {len(ast_results)} files analyzed with Tree-sitter")
+                                else:
+                                    logger.warning(f"Enhanced AST analysis returned no results for {repo.repository.url}")
+                            else:
+                                logger.warning(f"Tree-sitter not available, falling back to basic AST analyzer")
+                        except Exception as e:
+                            logger.warning(f"Enhanced AST analysis failed for {repo.repository.url}: {e}")
+                        
+                        # 2. 기본 AST Analyzer로 fallback (Enhanced가 실패했거나 결과가 없는 경우)
+                        if not ast_results:
+                            logger.info(f"Using basic AST analyzer as fallback for: {repo.repository.url}")
+                            try:
+                                ast_results = basic_ast_analyzer.analyze_files(repo.clone_path, repo.files)
+                                logger.info(f"Basic AST analysis completed: {len(ast_results)} files analyzed")
+                            except Exception as e:
+                                logger.error(f"Basic AST analysis also failed for {repo.repository.url}: {e}")
+                                ast_results = {}
                         
                         # AST 분석 결과를 저장소에 저장
                         repo.ast_analysis = ast_results
                         
+                        # Enhanced 분석 결과가 있으면 추가 정보도 저장
+                        if enhanced_results:
+                            if repo.enhanced_analysis is None:
+                                repo.enhanced_analysis = {}
+                            repo.enhanced_analysis.update({
+                                'tree_sitter_summary': enhanced_results.get('summary', {}),
+                                'capabilities_used': enhanced_results.get('capabilities_used', {}),
+                                'timestamp': enhanced_results.get('timestamp')
+                            })
+                        
                         # 코드 메트릭스 계산
                         total_complexity = 0
                         total_functions = 0
+                        total_classes = 0
+                        total_imports = 0
                         
                         for file_path, ast_nodes in ast_results.items():
                             for node in ast_nodes:
@@ -679,14 +732,38 @@ class AnalysisService:
                                     if complexity:
                                         total_complexity += complexity
                                         total_functions += 1
+                                
+                                # 노드 타입별 카운트
+                                if hasattr(node, 'type'):
+                                    if 'Function' in node.type or 'Method' in node.type:
+                                        total_functions += 1
+                                    elif 'Class' in node.type:
+                                        total_classes += 1
+                                    elif 'Import' in node.type:
+                                        total_imports += 1
                         
-                        # 평균 복잡도 계산
+                        # 평균 복잡도 계산 및 메트릭 업데이트
                         if total_functions > 0:
                             avg_complexity = total_complexity / total_functions
                             repo.code_metrics.cyclomatic_complexity = avg_complexity
                         
+                        # 추가 메트릭 정보 저장
+                        if not hasattr(repo.code_metrics, 'ast_metrics'):
+                            repo.code_metrics.ast_metrics = {}
+                        
+                        repo.code_metrics.ast_metrics.update({
+                            'total_functions': total_functions,
+                            'total_classes': total_classes,
+                            'total_imports': total_imports,
+                            'files_analyzed': len(ast_results),
+                            'analysis_method': 'enhanced' if enhanced_results else 'basic'
+                        })
+                        
                         updated_repositories.append(repo)
-                        logger.info(f"AST analysis completed for repository: {repo.repository.url} ({len(ast_results)} files analyzed)")
+                        
+                        analysis_method = 'Enhanced (Tree-sitter)' if enhanced_results else 'Basic'
+                        logger.info(f"AST analysis completed for repository: {repo.repository.url} "
+                                  f"({len(ast_results)} files analyzed using {analysis_method})")
                     
                     except Exception as e:
                         logger.error(f"Error processing AST analysis for repository: {str(e)}")
@@ -696,6 +773,14 @@ class AnalysisService:
             
                 # 업데이트된 저장소 목록으로 교체
                 analysis_results[analysis_id].repositories = updated_repositories
+                
+                # 전체 AST 분석 요약 로그
+                total_files_analyzed = sum(
+                    len(repo.ast_analysis) if hasattr(repo, 'ast_analysis') and repo.ast_analysis else 0 
+                    for repo in updated_repositories
+                )
+                logger.info(f"AST analysis completed for analysis {analysis_id}: "
+                          f"{total_files_analyzed} total files analyzed across {len(updated_repositories)} repositories")
                 
         except Exception as e:
             logger.error(f"AST analysis failed for {analysis_id}: {e}")
