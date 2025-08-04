@@ -88,7 +88,7 @@ class ASTAnalyzer:
             child_nodes = self._convert_python_ast_to_nodes(child, node_name or parent_name)
             ast_node.children.extend(child_nodes)
         
-        nodes.append(ast_node.to_dict())
+        nodes.append(ast_node)
         return nodes
     
     def _get_python_node_name(self, node: ast.AST) -> Optional[str]:

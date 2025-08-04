@@ -506,6 +506,8 @@ class AnalysisService:
                                     
                                     # 분석 결과 저장 (commit 정보 포함)
                                     languages = list(set(f.language for f in repo.files if f.language))
+                                    ast_data_json = json.dumps(repo.ast_analysis, default=lambda o: o.__dict__, indent=2) if repo.ast_analysis else None
+
                                     RagRepositoryAnalysisService.save_analysis_results(
                                         db=db,
                                         repo_analysis_id=repo_analysis.id,
@@ -514,7 +516,8 @@ class AnalysisService:
                                         languages=languages,
                                         config_files=repo.config_files,
                                         documentation_files=repo.documentation_files,
-                                        commit_info=repo.commit_info  # commit 정보 전달
+                                        commit_info=repo.commit_info,  # commit 정보 전달
+                                        ast_data=ast_data_json
                                     )
                                     
                                     logger.info(f"Repository analysis saved with commit info: {repo.repository.url} - {repo.commit_info.get('commit_hash', 'unknown')[:8]}")
@@ -708,6 +711,7 @@ class AnalysisService:
                         
                         # AST 분석 결과를 저장소에 저장
                         repo.ast_analysis = ast_results
+                        logger.info(f"AST analysis data for {repo.repository.url}: {json.dumps(repo.ast_analysis, default=lambda o: o.__dict__, indent=2)}")
                         
                         # Enhanced 분석 결과가 있으면 추가 정보도 저장
                         if enhanced_results:

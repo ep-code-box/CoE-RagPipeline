@@ -21,11 +21,14 @@ class SourceSummaryService:
     
     def __init__(self):
         """소스코드 요약 서비스 초기화"""
-        if not settings.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
+        if not settings.SKAX_API_KEY:
+            raise ValueError("SKAX_API_KEY가 설정되지 않았습니다.")
         
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = "gpt-4o-mini"  # 비용 효율적인 모델 사용
+        self.client = OpenAI(
+            api_key=settings.SKAX_API_KEY,
+            base_url=settings.SKAX_API_BASE
+        )
+        self.model = settings.SKAX_MODEL_NAME
         
         # 지원하는 파일 확장자
         self.supported_extensions = {
