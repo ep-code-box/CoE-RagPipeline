@@ -301,3 +301,32 @@ class GitAnalyzer:
                     doc_files.append(str(relative_path))
         
         return doc_files
+    
+    def calculate_code_metrics(self, files: List[FileInfo]) -> 'CodeMetrics':
+        """파일 목록을 기반으로 코드 메트릭 계산"""
+        from models.schemas import CodeMetrics
+        
+        total_lines = 0
+        code_files = 0
+        
+        # 프로그래밍 언어 파일들만 필터링
+        programming_languages = {
+            'Python', 'JavaScript', 'TypeScript', 'Java', 'Kotlin', 'Scala',
+            'Go', 'Rust', 'C++', 'C', 'C#', 'PHP', 'Ruby', 'Swift', 'R'
+        }
+        
+        for file_info in files:
+            if file_info.language in programming_languages and file_info.lines_of_code:
+                total_lines += file_info.lines_of_code
+                code_files += 1
+        
+        # 기본 메트릭 계산
+        metrics = CodeMetrics(
+            lines_of_code=total_lines,
+            cyclomatic_complexity=None,  # 추후 구현 가능
+            maintainability_index=None,  # 추후 구현 가능
+            comment_ratio=None  # 추후 구현 가능
+        )
+        
+        logger.info(f"Calculated code metrics: {total_lines} lines across {code_files} code files")
+        return metrics

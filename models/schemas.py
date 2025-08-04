@@ -64,6 +64,7 @@ class RepositoryAnalysis(BaseModel):
     code_metrics: CodeMetrics = CodeMetrics()
     documentation_files: List[str] = []
     config_files: List[str] = []
+    commit_info: Dict[str, Any] = {}
 
 
 class CorrelationAnalysis(BaseModel):
