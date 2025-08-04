@@ -10,8 +10,14 @@ Git 레포지토리들을 분석하여 레포지토리간 연관도, AST 분석,
 - **기술스펙 정적 분석**: 의존성, 프레임워크, 라이브러리, 코드 품질 메트릭 분석
 - **레포지토리간 연관도 분석**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
 - **문서 자동 수집**: doc 폴더, README, 참조 URL에서 개발 문서 자동 수집 및 분석
-- **LLM 기반 문서 자동 생성**: 분석 결과를 바탕으로 7가지 타입의 개발 문서 자동 생성 ⭐ **NEW**
-  - **개발 가이드**: 코딩 컨벤션, 모범 사례, 프로젝트 구조 가이드
+- **소스코드 요약 및 분석**: 실제 소스코드 파일을 LLM이 읽고 분석하여 요약 ⭐ **NEW**
+  - **LLM 기반 소스코드 요약**: 실제 소스코드 파일을 LLM이 읽고 분석하여 요약
+  - **배치 처리**: 대용량 레포지토리도 효율적으로 처리 (최대 100개 파일, 배치 크기 5개)
+  - **영구 캐싱**: 한 번 요약된 파일은 캐시되어 재사용 (7일간 유효)
+  - **vectorDB 저장**: 요약된 소스코드를 벡터 데이터베이스에 저장하여 검색 가능
+  - **성능 최적화**: 동시 처리 제한, 재시도 로직, 배치 간 대기 등으로 API 안정성 확보
+- **LLM 기반 문서 자동 생성**: 분석 결과를 바탕으로 7가지 타입의 개발 문서 자동 생성 ⭐ **ENHANCED**
+  - **개발 가이드**: 코딩 컨벤션, 모범 사례, 프로젝트 구조 가이드 (소스코드 요약 포함)
   - **API 문서**: 엔드포인트 명세, 사용법, 예제 코드
   - **아키텍처 개요**: 시스템 구조, 컴포넌트 관계, 설계 패턴
   - **코드 리뷰 요약**: 코드 품질 이슈, 개선 사항, 보안 취약점
@@ -160,6 +166,63 @@ CoE-RagPipeline/
 ```
 
 ## 🔧 API 엔드포인트
+
+### 📝 소스코드 요약 API ⭐ **NEW**
+
+#### 단일 파일 요약
+```bash
+# 단일 소스파일 요약
+curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-file" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_path": "/path/to/source/file.py",
+    "max_tokens": 1000,
+    "use_cache": true
+  }'
+```
+
+#### 디렉토리 일괄 요약
+```bash
+# 디렉토리 내 모든 소스파일 요약
+curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-directory" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "directory_path": "/path/to/source/directory",
+    "max_files": 100,
+    "batch_size": 5
+  }'
+```
+
+#### 레포지토리 소스코드 요약
+```bash
+# 분석된 레포지토리의 소스코드 요약 및 vectorDB 저장
+curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_id}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "clone_path": "/path/to/cloned/repository",
+    "max_files": 100,
+    "batch_size": 5,
+    "embed_to_vector_db": true
+  }'
+```
+
+#### 요약 결과 조회
+```bash
+# 저장된 레포지토리 요약 결과 조회
+curl -X GET "http://localhost:8001/api/v1/source-summary/summaries/{analysis_id}"
+
+# 소스코드 요약 검색
+curl -X GET "http://localhost:8001/api/v1/source-summary/search/{analysis_id}?query=authentication%20function&top_k=10"
+```
+
+#### 캐시 관리
+```bash
+# 캐시 통계 조회
+curl -X GET "http://localhost:8001/api/v1/source-summary/cache/stats"
+
+# 캐시 정리 (7일 이상된 파일 삭제)
+curl -X POST "http://localhost:8001/api/v1/source-summary/cache/cleanup?max_age_days=7"
+```
 
 ### 🔍 Git 분석 및 코드 처리
 - **`POST /api/v1/analyze`**: Git 레포지토리 전체 분석 수행

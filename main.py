@@ -3,7 +3,8 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import health, analysis, embedding, document_generation
+from routers import health, analysis, embedding, document_generation, source_summary
+from routers.enhanced import enhanced_analysis
 from config.settings import settings
 from utils.server_utils import find_available_port
 from utils.app_initializer import initialize_services
@@ -93,6 +94,8 @@ def create_app() -> FastAPI:
     app.include_router(analysis.router)
     app.include_router(embedding.router)
     app.include_router(document_generation.router)
+    app.include_router(source_summary.router)
+    app.include_router(enhanced_analysis.router)
 
     return app
 

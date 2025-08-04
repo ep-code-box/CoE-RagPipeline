@@ -82,6 +82,7 @@ class AnalysisResult(BaseModel):
     correlation_analysis: Optional[CorrelationAnalysis] = None
     error_message: Optional[str] = None
     generated_documents: List['GeneratedDocument'] = []
+    source_summaries_used: Optional[bool] = False
 
 
 class HealthResponse(BaseModel):

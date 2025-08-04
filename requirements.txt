@@ -19,24 +19,24 @@ langchain-community
 langchain-chroma
 chromadb
 
-# AST 분석을 위한 라이브러리들 (선택적)
-# ast-decompiler
-# tree-sitter
-# tree-sitter-python
-# tree-sitter-javascript
-# tree-sitter-java
-# tree-sitter-typescript
+# AST 분석을 위한 라이브러리들
+ast-decompiler
+tree-sitter
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-java
+tree-sitter-typescript
 
-# 정적 분석 도구들 (선택적)
-# bandit
-# pylint
-# flake8
-# mypy
-# radon
+# 정적 분석 도구들
+bandit
+pylint
+flake8
+mypy
+radon
 
-# 의존성 분석 (선택적)
-# pipdeptree
-# pip-audit
+# 의존성 분석
+pipdeptree
+pip-audit
 
 # 유틸리티
 tqdm

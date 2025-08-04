@@ -73,6 +73,7 @@ document_generation_tasks = {}
 async def generate_documents(
     request: DocumentGenerationRequest,
     background_tasks: BackgroundTasks,
+    use_source_summaries: bool = Query(True, description="소스코드 요약 사용 여부"),
     db: Session = Depends(get_db)
 ):
     """분석 결과를 바탕으로 문서를 생성합니다."""
@@ -111,7 +112,8 @@ async def generate_documents(
             _generate_documents_background,
             task_id,
             request,
-            analysis_result
+            analysis_result,
+            use_source_summaries
         )
         
         logger.info(f"Document generation task started: {task_id} for analysis {request.analysis_id}")
@@ -294,7 +296,8 @@ async def delete_generated_documents(analysis_id: str):
 async def _generate_documents_background(
     task_id: str,
     request: DocumentGenerationRequest,
-    analysis_result: Any
+    analysis_result: Any,
+    use_source_summaries: bool = True
 ):
     """백그라운드에서 문서 생성을 수행합니다."""
     try:
@@ -306,7 +309,7 @@ async def _generate_documents_background(
         # LLM 서비스 초기화
         llm_service = LLMDocumentService()
         
-        # 분석 결과를 딕셔너리로 변환 (analysis_service의 로직과 동일)
+        # 분석 결과를 딕셔너리로 변환 (개선된 로직)
         analysis_data = {
             "analysis_id": request.analysis_id,
             "repositories": [],
@@ -315,50 +318,98 @@ async def _generate_documents_background(
             "code_metrics": {}
         }
         
-        # 저장소 정보 추출
+        logger.info(f"Processing analysis result for {request.analysis_id}")
+        logger.debug(f"Analysis result type: {type(analysis_result)}")
+        logger.debug(f"Analysis result has repositories: {hasattr(analysis_result, 'repositories')}")
+        
+        # 저장소 정보 추출 (개선된 로직)
         if hasattr(analysis_result, 'repositories') and analysis_result.repositories:
-            for repo in analysis_result.repositories:
+            logger.info(f"Found {len(analysis_result.repositories)} repositories in analysis result")
+            
+            for i, repo in enumerate(analysis_result.repositories):
+                logger.debug(f"Processing repository {i}: {type(repo)}")
+                
+                # 안전한 데이터 추출
                 repo_data = {
-                    "url": repo.repository.url if hasattr(repo, 'repository') else "Unknown",
-                    "branch": repo.repository.branch if hasattr(repo, 'repository') else "main",
-                    "name": repo.repository.name if hasattr(repo, 'repository') else None
+                    "url": "Unknown",
+                    "branch": "main", 
+                    "name": None
                 }
+                
+                # repository 정보 추출
+                if hasattr(repo, 'repository') and repo.repository:
+                    repo_data["url"] = str(repo.repository.url) if hasattr(repo.repository, 'url') else "Unknown"
+                    repo_data["branch"] = repo.repository.branch if hasattr(repo.repository, 'branch') else "main"
+                    repo_data["name"] = repo.repository.name if hasattr(repo.repository, 'name') else None
+                    logger.debug(f"Repository info: {repo_data}")
+                
                 analysis_data["repositories"].append(repo_data)
                 
-                # 기술 스펙 정보 추가
+                # 기술 스펙 정보 추가 (개선된 로직)
                 if hasattr(repo, 'tech_specs') and repo.tech_specs:
-                    for tech_spec in repo.tech_specs:
+                    logger.debug(f"Found {len(repo.tech_specs)} tech specs for repository {i}")
+                    
+                    for j, tech_spec in enumerate(repo.tech_specs):
                         tech_data = {
-                            "name": tech_spec.language if hasattr(tech_spec, 'language') else "Unknown",
-                            "version": tech_spec.version if hasattr(tech_spec, 'version') else "Unknown",
-                            "framework": tech_spec.framework if hasattr(tech_spec, 'framework') else None,
-                            "dependencies": tech_spec.dependencies if hasattr(tech_spec, 'dependencies') else []
+                            "name": getattr(tech_spec, 'language', 'Unknown'),
+                            "version": getattr(tech_spec, 'version', 'Unknown'),
+                            "framework": getattr(tech_spec, 'framework', None),
+                            "dependencies": getattr(tech_spec, 'dependencies', [])
                         }
                         analysis_data["tech_specs"].append(tech_data)
+                        logger.debug(f"Tech spec {j}: {tech_data}")
                 
-                # AST 분석 정보 추가
+                # AST 분석 정보 추가 (개선된 로직)
                 if hasattr(repo, 'ast_analysis') and repo.ast_analysis:
-                    analysis_data["ast_analysis"].update(repo.ast_analysis)
+                    logger.debug(f"Found AST analysis data for repository {i}")
+                    if isinstance(repo.ast_analysis, dict):
+                        analysis_data["ast_analysis"].update(repo.ast_analysis)
+                    else:
+                        logger.warning(f"AST analysis data is not a dict: {type(repo.ast_analysis)}")
                 
-                # 코드 메트릭 정보 추가
+                # 코드 메트릭 정보 추가 (개선된 로직)
                 if hasattr(repo, 'code_metrics') and repo.code_metrics:
+                    logger.debug(f"Found code metrics for repository {i}")
                     metrics = repo.code_metrics
+                    
+                    # CodeMetrics 모델의 실제 필드명 사용
                     analysis_data["code_metrics"] = {
-                        "total_files": metrics.total_files if hasattr(metrics, 'total_files') else 0,
-                        "total_lines": metrics.total_lines if hasattr(metrics, 'total_lines') else 0,
-                        "cyclomatic_complexity": metrics.cyclomatic_complexity if hasattr(metrics, 'cyclomatic_complexity') else 0,
-                        "maintainability_index": metrics.maintainability_index if hasattr(metrics, 'maintainability_index') else 0
+                        "lines_of_code": getattr(metrics, 'lines_of_code', 0),
+                        "cyclomatic_complexity": getattr(metrics, 'cyclomatic_complexity', 0),
+                        "maintainability_index": getattr(metrics, 'maintainability_index', 0),
+                        "comment_ratio": getattr(metrics, 'comment_ratio', 0)
                     }
+                    logger.debug(f"Code metrics: {analysis_data['code_metrics']}")
+        else:
+            logger.warning(f"No repositories found in analysis result for {request.analysis_id}")
+        
+        # 최종 분석 데이터 로깅
+        logger.info(f"Final analysis data summary:")
+        logger.info(f"  - Repositories: {len(analysis_data['repositories'])}")
+        logger.info(f"  - Tech specs: {len(analysis_data['tech_specs'])}")
+        logger.info(f"  - AST analysis entries: {len(analysis_data['ast_analysis'])}")
+        logger.info(f"  - Code metrics: {bool(analysis_data['code_metrics'])}")
         
         # 문서 타입을 DocumentType enum으로 변환
         document_types = [DocumentType(doc_type) for doc_type in request.document_types]
         
-        # 문서 생성
-        generated_documents = await llm_service.generate_multiple_documents(
-            analysis_data=analysis_data,
-            document_types=document_types,
-            language=request.language
-        )
+        # 문서 생성 (소스코드 요약 사용 여부에 따라 다른 메서드 호출)
+        if use_source_summaries:
+            logger.info(f"Generating documents with source summaries for analysis {request.analysis_id}")
+            generated_documents = await llm_service.generate_documents_with_source_summaries(
+                analysis_data=analysis_data,
+                analysis_id=request.analysis_id,
+                document_types=document_types,
+                language=request.language,
+                custom_prompt=request.custom_prompt
+            )
+        else:
+            logger.info(f"Generating documents without source summaries for analysis {request.analysis_id}")
+            generated_documents = await llm_service.generate_multiple_documents(
+                analysis_data=analysis_data,
+                document_types=document_types,
+                language=request.language
+            )
         
         # 생성된 문서들을 파일로 저장
         documents_dir = f"output/documents/{request.analysis_id}"
