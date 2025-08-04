@@ -130,7 +130,8 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
             status=AnalysisStatus.PENDING,
             created_at=datetime.now(),
             repositories=[],
-            correlation_analysis=None
+            correlation_analysis=None,
+            source_summaries_used=False
         )
         
         # 메모리 캐시에 저장

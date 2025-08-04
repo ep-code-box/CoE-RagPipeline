@@ -102,26 +102,84 @@ class EmbeddingService:
             # 문서들을 Chroma에 저장
             doc_ids = self.vectorstore.add_documents(documents)
             
-            # 변경사항 저장 (로컬 파일 시스템 사용시에만)
-            if not self.chroma_host:
-                self.vectorstore.persist()
-            
-            logger.info(f"Successfully embedded and stored {len(documents)} documents for analysis {analysis_result.analysis_id}")
+            logger.info(f"Successfully embedded {len(documents)} documents for analysis {analysis_result.analysis_id}")
             
             return {
                 "status": "success",
-                "analysis_id": analysis_result.analysis_id,
-                "document_count": len(documents),
-                "document_ids": doc_ids
+                "count": len(documents),
+                "document_ids": doc_ids,
+                "analysis_id": analysis_result.analysis_id
             }
             
         except Exception as e:
-            logger.error(f"Failed to process analysis result {analysis_result.analysis_id}: {e}")
+            logger.error(f"Failed to process analysis result {analysis_result.analysis_id}: {str(e)}")
+            raise
+    
+    def embed_source_summaries(
+        self, 
+        summaries: Dict[str, Any], 
+        analysis_id: str
+    ) -> Dict[str, Any]:
+        """
+        소스코드 요약 결과를 embedding하고 Chroma에 저장
+        
+        Args:
+            summaries: 소스코드 요약 결과
+            analysis_id: 분석 ID
+            
+        Returns:
+            처리 결과 정보
+        """
+        try:
+            if not summaries or "summaries" not in summaries:
+                logger.warning(f"No summaries found for analysis {analysis_id}")
+                return {"status": "no_summaries", "count": 0}
+            
+            documents = []
+            file_summaries = summaries["summaries"]
+            
+            for file_path, summary_data in file_summaries.items():
+                if not summary_data or "summary" not in summary_data:
+                    continue
+                
+                # Document 객체 생성
+                doc = Document(
+                    page_content=summary_data["summary"],
+                    metadata={
+                        "analysis_id": analysis_id,
+                        "source_type": "source_summary",
+                        "file_path": file_path,
+                        "file_name": summary_data.get("file_name", ""),
+                        "language": summary_data.get("language", "Unknown"),
+                        "file_size": summary_data.get("file_size", 0),
+                        "tokens_used": summary_data.get("tokens_used", 0),
+                        "summarized_at": summary_data.get("summarized_at", ""),
+                        "model_used": summary_data.get("model_used", ""),
+                        "file_hash": summary_data.get("file_hash", "")
+                    }
+                )
+                documents.append(doc)
+            
+            if not documents:
+                logger.warning(f"No valid summary documents created for analysis {analysis_id}")
+                return {"status": "no_valid_summaries", "count": 0}
+            
+            # 문서들을 Chroma에 저장
+            doc_ids = self.vectorstore.add_documents(documents)
+            
+            logger.info(f"Successfully embedded {len(documents)} source summary documents for analysis {analysis_id}")
+            
             return {
-                "status": "error",
-                "analysis_id": analysis_result.analysis_id,
-                "error": str(e)
+                "status": "success",
+                "count": len(documents),
+                "document_ids": doc_ids,
+                "analysis_id": analysis_id,
+                "source_type": "source_summary"
             }
+            
+        except Exception as e:
+            logger.error(f"Failed to embed source summaries for analysis {analysis_id}: {str(e)}")
+            raise
     
     def _create_documents_from_analysis(self, analysis_result: AnalysisResult) -> List[Document]:
         """
@@ -370,6 +428,61 @@ class EmbeddingService:
             
         except Exception as e:
             logger.error(f"Failed to search documents: {e}")
+            return []
+    
+    def search_source_summaries(
+        self, 
+        query: str, 
+        analysis_id: Optional[str] = None,
+        k: int = 5,
+        language_filter: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        소스코드 요약에서 검색
+        
+        Args:
+            query: 검색 쿼리
+            analysis_id: 특정 분석 ID로 필터링 (선택사항)
+            k: 반환할 결과 수
+            language_filter: 특정 언어로 필터링 (선택사항)
+            
+        Returns:
+            검색 결과 리스트
+        """
+        try:
+            # 필터 조건 구성
+            filter_dict = {"source_type": "source_summary"}
+            
+            if analysis_id:
+                filter_dict["analysis_id"] = analysis_id
+                
+            if language_filter:
+                filter_dict["language"] = language_filter
+            
+            # 검색 수행
+            results = self.vectorstore.similarity_search_with_score(
+                query=query,
+                k=k,
+                filter=filter_dict
+            )
+            
+            # 결과 포맷팅
+            formatted_results = []
+            for doc, score in results:
+                formatted_results.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "similarity_score": score,
+                    "file_path": doc.metadata.get("file_path", ""),
+                    "language": doc.metadata.get("language", "Unknown"),
+                    "file_name": doc.metadata.get("file_name", "")
+                })
+            
+            logger.info(f"Found {len(formatted_results)} source summary results for query: {query}")
+            return formatted_results
+            
+        except Exception as e:
+            logger.error(f"Failed to search source summaries: {str(e)}")
             return []
     
     def _get_latest_analysis_for_repository(self, repository_url: str) -> Optional[str]:

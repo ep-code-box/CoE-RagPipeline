@@ -128,7 +128,7 @@ import os.path
 
 def _get_init_flag_file():
     """초기화 플래그 파일 경로를 반환합니다."""
-    return os.path.join(tempfile.gettempdir(), 'coe_rag_db_initialized.flag')
+    return os.path.join(tempfile.gettempdir(), 'coe_db_initialized.flag')
 
 def _is_database_initialized():
     """데이터베이스가 이미 초기화되었는지 확인합니다."""
@@ -149,7 +149,7 @@ def init_database():
         print("✅ Database already initialized, skipping...")
         return True
     
-    print("🔄 RAG Pipeline 데이터베이스 초기화 중...")
+    print("🔄 데이터베이스 초기화 중...")
     
     # 연결 테스트
     if not test_connection():
