@@ -4,11 +4,85 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 from enum import Enum
 from pydantic import HttpUrl
+import asyncio
 
 from openai import OpenAI
 from config.settings import settings
+from utils.token_utils import TokenUtils, TokenChunk
 
 logger = logging.getLogger(__name__)
+
+# 전역적으로 사용할 수 있는 CustomJSONEncoder 정의
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, HttpUrl):
+            return str(obj)
+        # models.schemas는 필요할 때만 import하여 순환 참조 방지
+        from models.schemas import ASTNode
+        if isinstance(obj, ASTNode):
+            return obj.to_dict()
+        return super().default(obj)
+
+def truncate_analysis_data(analysis_data: Dict[str, Any], max_tokens: int = 10000) -> Dict[str, Any]:
+    """
+    분석 데이터가 너무 클 경우 중요한 부분만 남기고 잘라냅니다.
+    """
+    try:
+        # CustomJSONEncoder를 사용하여 직렬화
+        serialized = json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
+        estimated_tokens = TokenUtils.estimate_tokens(serialized)
+        
+        if estimated_tokens <= max_tokens:
+            return analysis_data
+            
+        logger.warning(f"분석 데이터가 너무 큼 ({estimated_tokens} 토큰), 잘라내기 시작)")
+        
+        # 중요한 정보만 남기고 잘라내기
+        truncated_data = {
+            "analysis_id": analysis_data.get("analysis_id"),
+            "repositories": [],
+            "tech_specs": [],
+            "ast_analysis": {},
+            "code_metrics": analysis_data.get("code_metrics", {})
+        }
+        
+        repos = analysis_data.get("repositories", [])[:3]
+        for repo in repos:
+            truncated_data["repositories"].append({
+                "url": str(repo.get("url", "Unknown")),
+                "branch": repo.get("branch", "main"),
+                "name": repo.get("name")
+            })
+        
+        tech_specs = analysis_data.get("tech_specs", [])[:10]
+        for spec in tech_specs:
+            truncated_data["tech_specs"].append({
+                "name": spec.get("name", "Unknown"),
+                "version": spec.get("version", "Unknown"),
+                "framework": spec.get("framework")
+            })
+        
+        ast_analysis = analysis_data.get("ast_analysis", {})
+        for file_path, nodes in list(ast_analysis.items())[:5]:
+            if isinstance(nodes, list):
+                truncated_data["ast_analysis"][file_path] = nodes[:5]
+        
+        truncated_serialized = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
+        final_tokens = TokenUtils.estimate_tokens(truncated_serialized)
+        
+        logger.info(f"분석 데이터 잘라내기 완료: {estimated_tokens} -> {final_tokens} 토큰")
+        
+        return truncated_data
+        
+    except Exception as e:
+        logger.error(f"분석 데이터 잘라내기 실패: {e}")
+        return {
+            "analysis_id": analysis_data.get("analysis_id"),
+            "repositories": analysis_data.get("repositories", [])[:1],
+            "tech_specs": [],
+            "ast_analysis": {},
+            "code_metrics": {}
+        }
 
 
 class DocumentType(str, Enum):
@@ -42,7 +116,9 @@ class LLMDocumentService:
         analysis_data: Dict[str, Any],
         document_type: DocumentType,
         custom_prompt: Optional[str] = None,
-        language: str = "korean"
+        language: str = "korean",
+        enable_chunking: bool = None,
+        max_tokens_per_chunk: int = None
     ) -> Dict[str, Any]:
         """
         분석 데이터를 바탕으로 문서를 생성합니다.
@@ -52,17 +128,78 @@ class LLMDocumentService:
             document_type: 생성할 문서 타입
             custom_prompt: 사용자 정의 프롬프트 (선택사항)
             language: 문서 언어 (korean/english)
+            enable_chunking: 청킹 기능 활성화 여부
+            max_tokens_per_chunk: 청크당 최대 토큰 수
             
         Returns:
             생성된 문서 정보
         """
         try:
+            # 설정에서 기본값 가져오기
+            if enable_chunking is None:
+                enable_chunking = settings.ENABLE_AUTO_CHUNKING
+            if max_tokens_per_chunk is None:
+                max_tokens_per_chunk = settings.MAX_TOKENS_PER_CHUNK
+            
             # 문서 타입별 프롬프트 생성
             system_prompt = self._get_system_prompt(document_type, language)
             user_prompt = custom_prompt or self._get_user_prompt(document_type, analysis_data, language)
             
             logger.info(f"문서 생성 시작: {document_type}, 언어: {language}")
             
+            # 토큰 수 확인 및 청킹 여부 결정
+            total_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+            estimated_tokens = TokenUtils.estimate_tokens(total_prompt)
+            model_limit = TokenUtils.get_model_limit(self.model, reserve_for_completion=4000)
+            
+            logger.info(f"추정 토큰 수: {estimated_tokens}, 모델 제한: {model_limit}")
+            
+            # 모델 제한의 95%를 기준으로 청킹 여부 결정 (보수적 접근)
+            conservative_limit = model_limit * 0.95
+            if enable_chunking and estimated_tokens > conservative_limit:
+                # 청킹 처리
+                logger.info(f"토큰 제한 초과 (보수적 기준 적용), 청킹 처리 시작: {estimated_tokens} > {conservative_limit}")
+                result = await self._generate_document_with_chunking(
+                    system_prompt, user_prompt, document_type, language, 
+                    analysis_data, max_tokens_per_chunk
+                )
+            else:
+                # 일반 처리 - 하지만 여전히 토큰 제한 확인
+                if estimated_tokens > model_limit * 0.9:
+                    logger.warning(f"토큰 사용량이 높음: {estimated_tokens}/{model_limit}")
+                
+                result = await self._generate_document_single(
+                    system_prompt, user_prompt, document_type, language, analysis_data
+                )
+            
+            logger.info(f"문서 생성 완료: {document_type}, 토큰 사용량: {result.get('tokens_used', 0)}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"문서 생성 실패: {document_type}, 오류: {str(e)}")
+            # 토큰 제한 오류인 경우 더 작은 청크로 재시도
+            if "maximum context length" in str(e).lower() or "token" in str(e).lower():
+                logger.warning("토큰 제한 오류 감지, 더 작은 청크로 재시도")
+                try:
+                    return await self.generate_document(
+                        analysis_data, document_type, custom_prompt, language,
+                        enable_chunking=True, max_tokens_per_chunk=2000
+                    )
+                except Exception as retry_e:
+                    logger.error(f"재시도도 실패: {str(retry_e)}")
+                    raise retry_e
+            raise
+    
+    async def _generate_document_single(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        document_type: DocumentType,
+        language: str,
+        analysis_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """단일 요청으로 문서 생성"""
+        try:
             # OpenAI API 호출
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -85,15 +222,145 @@ class LLMDocumentService:
                 "model_used": self.model,
                 "tokens_used": response.usage.total_tokens if response.usage else 0,
                 "analysis_id": analysis_data.get("analysis_id"),
-                "repositories": [repo.get("url") for repo in analysis_data.get("repositories", [])]
+                "repositories": [repo.get("url") for repo in analysis_data.get("repositories", [])],
+                "chunked": False
             }
             
-            logger.info(f"문서 생성 완료: {document_type}, 토큰 사용량: {result['tokens_used']}")
             return result
             
         except Exception as e:
-            logger.error(f"문서 생성 실패: {document_type}, 오류: {str(e)}")
+            logger.error(f"단일 문서 생성 실패: {str(e)}")
             raise
+    
+    async def _generate_document_with_chunking(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        document_type: DocumentType,
+        language: str,
+        analysis_data: Dict[str, Any],
+        max_tokens_per_chunk: int
+    ) -> Dict[str, Any]:
+        """청킹을 사용한 문서 생성"""
+        try:
+            logger.info("청킹 기반 문서 생성 시작")
+            
+            # 사용자 프롬프트를 청크로 분할
+            chunks = TokenUtils.chunk_text(
+                user_prompt,
+                max_tokens_per_chunk=max_tokens_per_chunk,
+                overlap_tokens=200,
+                preserve_structure=True
+            )
+            
+            logger.info(f"프롬프트를 {len(chunks)}개 청크로 분할")
+            
+            # 각 청크에 대해 문서 생성
+            chunk_results = []
+            total_tokens_used = 0
+            
+            for i, chunk in enumerate(chunks):
+                logger.info(f"청크 {i+1}/{len(chunks)} 처리 중 (토큰: {chunk.estimated_tokens})")
+                
+                try:
+                    # 청크별 시스템 프롬프트 수정
+                    chunk_system_prompt = self._get_chunk_system_prompt(
+                        system_prompt, document_type, language, chunk, len(chunks)
+                    )
+                    
+                    # API 호출
+                    response = self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": chunk_system_prompt},
+                            {"role": "user", "content": chunk.content}
+                        ],
+                        temperature=0.7,
+                        max_tokens=4000
+                    )
+                    
+                    chunk_content = response.choices[0].message.content
+                    chunk_tokens = response.usage.total_tokens if response.usage else 0
+                    total_tokens_used += chunk_tokens
+                    
+                    chunk_results.append({
+                        "content": chunk_content,
+                        "tokens_used": chunk_tokens,
+                        "chunk_index": i,
+                        "chunk_tokens": chunk.estimated_tokens
+                    })
+                    
+                    logger.info(f"청크 {i+1} 완료, 토큰 사용: {chunk_tokens}")
+                    
+                    # API 호출 간격 조절 (rate limiting 방지)
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)
+                        
+                except Exception as e:
+                    logger.error(f"청크 {i+1} 처리 실패: {str(e)}")
+                    chunk_results.append({
+                        "content": f"[청크 {i+1} 처리 실패: {str(e)}]",
+                        "tokens_used": 0,
+                        "chunk_index": i,
+                        "error": str(e)
+                    })
+            
+            # 청크 결과 병합
+            merged_result = TokenUtils.merge_chunk_results(chunk_results, merge_strategy="concatenate")
+            
+            # 최종 결과 구성
+            result = {
+                "document_type": document_type,
+                "language": language,
+                "content": merged_result.get("content", ""),
+                "generated_at": datetime.now().isoformat(),
+                "model_used": self.model,
+                "tokens_used": total_tokens_used,
+                "analysis_id": analysis_data.get("analysis_id"),
+                "repositories": [repo.get("url") for repo in analysis_data.get("repositories", [])],
+                "chunked": True,
+                "chunks_processed": len(chunks),
+                "chunk_details": merged_result.get("chunk_details", [])
+            }
+            
+            logger.info(f"청킹 기반 문서 생성 완료: {len(chunks)}개 청크, 총 토큰: {total_tokens_used}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"청킹 기반 문서 생성 실패: {str(e)}")
+            raise
+    
+    def _get_chunk_system_prompt(
+        self,
+        original_system_prompt: str,
+        document_type: DocumentType,
+        language: str,
+        chunk: TokenChunk,
+        total_chunks: int
+    ) -> str:
+        """청크별 시스템 프롬프트 생성"""
+        chunk_info = f"이것은 전체 {total_chunks}개 청크 중 {chunk.chunk_index + 1}번째 청크입니다."
+        
+        if language == "korean":
+            chunk_instruction = f"""
+{original_system_prompt}
+
+{chunk_info}
+이 청크의 내용을 바탕으로 문서의 해당 부분을 작성해주세요. 
+다른 청크와 연결될 수 있도록 일관성 있는 톤과 스타일을 유지해주세요.
+청크 번호를 명시하여 구조화된 문서를 작성해주세요.
+"""
+        else:
+            chunk_instruction = f"""
+{original_system_prompt}
+
+{chunk_info}
+Based on this chunk's content, write the corresponding part of the document.
+Maintain consistent tone and style so it can be connected with other chunks.
+Structure the document by clearly indicating the chunk number.
+"""
+        
+        return chunk_instruction
     
     def _get_system_prompt(self, document_type: DocumentType, language: str) -> str:
         """문서 타입별 시스템 프롬프트 생성"""
@@ -139,22 +406,14 @@ class LLMDocumentService:
     def _get_user_prompt(self, document_type: DocumentType, analysis_data: Dict[str, Any], language: str) -> str:
         """분석 데이터를 바탕으로 사용자 프롬프트 생성"""
         
-        # Define a custom encoder for handling HttpUrl and ASTNode serialization
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, HttpUrl):
-                    return str(obj)
-                # Handle ASTNode objects by converting them to dictionaries
-                from models.schemas import ASTNode
-                if isinstance(obj, ASTNode):
-                    return obj.to_dict()
-                return super().default(obj)
+        # 분석 데이터가 너무 클 경우 잘라내기
+        truncated_data = truncate_analysis_data(analysis_data, max_tokens=settings.MAX_ANALYSIS_DATA_TOKENS)
         
-        # 분석 데이터에서 주요 정보 추출
-        repositories = analysis_data.get("repositories", [])
-        tech_specs = analysis_data.get("tech_specs", [])
-        ast_analysis = analysis_data.get("ast_analysis", {})
-        code_metrics = analysis_data.get("code_metrics", {})
+        # 잘라낸 분석 데이터에서 주요 정보 추출
+        repositories = truncated_data.get("repositories", [])
+        tech_specs = truncated_data.get("tech_specs", [])
+        ast_analysis = truncated_data.get("ast_analysis", {})
+        code_metrics = truncated_data.get("code_metrics", {})
         
         logger.debug(f"Extracted data - repos: {len(repositories)}, tech_specs: {len(tech_specs)}, ast: {len(ast_analysis)}, metrics: {bool(code_metrics)}")
         
@@ -167,7 +426,7 @@ class LLMDocumentService:
         # 기술 스택 정보 (개선된 로직)
         if tech_specs:
             tech_info = "\n".join([
-                f"- {spec.get('name', 'Unknown')}: {spec.get('version', 'Unknown')}" + 
+                f"- {spec.get('name', 'Unknown')}: {spec.get('version', 'Unknown')}" +
                 (f" (프레임워크: {spec.get('framework')})" if spec.get('framework') else "") +
                 (f" (의존성: {len(spec.get('dependencies', []))}개)" if spec.get('dependencies') else "")
                 for spec in tech_specs
@@ -207,6 +466,9 @@ class LLMDocumentService:
             (code_metrics and any(code_metrics.values()))
         )
         
+        # 분석 데이터가 있는 경우 기존 로직 사용
+        detailed_analysis_json = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
+
         if not has_meaningful_data:
             # 분석 데이터가 없는 경우 안내 메시지 포함
             prompt_templates = {
@@ -237,8 +499,8 @@ class LLMDocumentService:
 
 ### 2. 분석 수행 방법
 ```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/analyze" \
+  -H "Content-Type: application/json" \
   -d '{{
     "repositories": [
       {{
@@ -255,8 +517,8 @@ curl -X POST "http://localhost:8001/api/v1/analyze" \\
 ### 3. 문서 재생성
 분석 완료 후 다음 명령으로 문서를 다시 생성하세요:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/documents/generate" \
+  -H "Content-Type: application/json" \
   -d '{{
     "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
     "document_types": ["{document_type}"],
@@ -293,8 +555,8 @@ This document is a {document_type} created based on code analysis results.
 
 ### 2. How to Perform Analysis
 ```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/analyze" \
+  -H "Content-Type: application/json" \
   -d '{{
     "repositories": [
       {{
@@ -311,8 +573,8 @@ curl -X POST "http://localhost:8001/api/v1/analyze" \\
 ### 3. Document Regeneration
 After analysis completion, regenerate the document with:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/documents/generate" \
+  -H "Content-Type: application/json" \
   -d '{{
     "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
     "document_types": ["{document_type}"],
@@ -340,7 +602,7 @@ This document will be updated with detailed content including actual code analys
 {metrics_info}
 
 ## 상세 분석 데이터
-{json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)}
+{detailed_analysis_json}
 
 마크다운 형식으로 작성하고, 실용적이고 구체적인 내용을 포함해주세요.
 실제 분석 결과를 바탕으로 개발자가 활용할 수 있는 구체적인 가이드를 제공해주세요.
@@ -359,7 +621,7 @@ Please create a {document_type} document based on the following code analysis re
 {metrics_info}
 
 ## Detailed Analysis Data
-{json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)}
+{detailed_analysis_json}
 
 Please write in markdown format and include practical and specific content.
 Provide concrete guides that developers can utilize based on actual analysis results.
@@ -378,56 +640,29 @@ Provide concrete guides that developers can utilize based on actual analysis res
     ) -> Dict[str, Any]:
         """
         분석 데이터와 소스코드 요약을 함께 활용하여 문서를 생성합니다.
-        
-        Args:
-            analysis_data: 분석 결과 데이터
-            source_summaries: 소스코드 요약 결과
-            document_type: 생성할 문서 타입
-            custom_prompt: 사용자 정의 프롬프트 (선택사항)
-            language: 문서 언어 (korean/english)
-            
-        Returns:
-            생성된 문서 정보
+        내부적으로 청킹 기능이 있는 generate_document를 호출합니다.
         """
         try:
-            # 문서 타입별 프롬프트 생성
-            system_prompt = self._get_system_prompt(document_type, language)
-            user_prompt = custom_prompt or self._get_enhanced_user_prompt(
+            # 향상된 사용자 프롬프트 생성
+            enhanced_user_prompt = self._get_enhanced_user_prompt(
                 document_type, analysis_data, source_summaries, language
             )
             
-            logger.info(f"문서 생성 시작 (소스 요약 포함): {document_type}, 언어: {language}")
-            
-            # OpenAI API 호출
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=4000
+            # 메인 문서 생성 메서드 호출 (청킹 기능 내장)
+            result = await self.generate_document(
+                analysis_data=analysis_data,
+                document_type=document_type,
+                custom_prompt=enhanced_user_prompt,
+                language=language
             )
             
-            generated_content = response.choices[0].message.content
+            # 소스 요약 관련 정보 추가
+            result["source_summaries_used"] = True
+            result["summarized_files_count"] = len(source_summaries.get("summaries", {})) if source_summaries else 0
             
-            # 결과 구성
-            result = {
-                "document_type": document_type,
-                "language": language,
-                "content": generated_content,
-                "generated_at": datetime.now().isoformat(),
-                "model_used": self.model,
-                "tokens_used": response.usage.total_tokens if response.usage else 0,
-                "analysis_id": analysis_data.get("analysis_id"),
-                "repositories": [repo.get("url") for repo in analysis_data.get("repositories", [])],
-                "source_summaries_used": True,
-                "summarized_files_count": len(source_summaries.get("summaries", {})) if source_summaries else 0
-            }
-            
-            logger.info(f"문서 생성 완료 (소스 요약 포함): {document_type}, 토큰 사용량: {result['tokens_used']}")
+            logger.info(f"문서 생성 완료 (소스 요약 포함): {document_type}")
             return result
-            
+
         except Exception as e:
             logger.error(f"문서 생성 실패 (소스 요약 포함): {document_type}, 오류: {str(e)}")
             raise
@@ -441,22 +676,14 @@ Provide concrete guides that developers can utilize based on actual analysis res
     ) -> str:
         """소스코드 요약을 포함한 향상된 사용자 프롬프트 생성"""
         
-        # Define a custom encoder for handling HttpUrl and ASTNode serialization
-        class CustomJSONEncoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, HttpUrl):
-                    return str(obj)
-                # Handle ASTNode objects by converting them to dictionaries
-                from models.schemas import ASTNode
-                if isinstance(obj, ASTNode):
-                    return obj.to_dict()
-                return super().default(obj)
-        
-        # 분석 데이터에서 주요 정보 추출
-        repositories = analysis_data.get("repositories", [])
-        tech_specs = analysis_data.get("tech_specs", [])
-        ast_analysis = analysis_data.get("ast_analysis", {})
-        code_metrics = analysis_data.get("code_metrics", {})
+        # 분석 데이터가 너무 클 경우 잘라내기
+        truncated_data = truncate_analysis_data(analysis_data, max_tokens=settings.MAX_ANALYSIS_DATA_TOKENS)
+
+        # 잘라낸 분석 데이터에서 주요 정보 추출
+        repositories = truncated_data.get("repositories", [])
+        tech_specs = truncated_data.get("tech_specs", [])
+        ast_analysis = truncated_data.get("ast_analysis", {})
+        code_metrics = truncated_data.get("code_metrics", {})
         
         logger.debug(f"Extracted data - repos: {len(repositories)}, tech_specs: {len(tech_specs)}, ast: {len(ast_analysis)}, metrics: {bool(code_metrics)}")
         
@@ -469,7 +696,7 @@ Provide concrete guides that developers can utilize based on actual analysis res
         # 기술 스택 정보 (개선된 로직)
         if tech_specs:
             tech_info = "\n".join([
-                f"- {spec.get('name', 'Unknown')}: {spec.get('version', 'Unknown')}" + 
+                f"- {spec.get('name', 'Unknown')}: {spec.get('version', 'Unknown')}" +
                 (f" (프레임워크: {spec.get('framework')})" if spec.get('framework') else "") +
                 (f" (의존성: {len(spec.get('dependencies', []))}개)" if spec.get('dependencies') else "")
                 for spec in tech_specs
@@ -532,7 +759,7 @@ Provide concrete guides that developers can utilize based on actual analysis res
                 key_summaries += f"\n**{file_path}** ({summary.get('language', 'Unknown')}):\n"
                 key_summaries += f"{summary.get('summary', '요약 없음')}\n"
         else:
-            key_summaries = "\n\n### 소스코드 요약 안내\n소스코드 요약을 위해 다음 API를 사용하세요:\n```bash\ncurl -X POST \"http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}\"\n```"
+            key_summaries = f"\n\n### 소스코드 요약 안내\n소스코드 요약을 위해 다음 API를 사용하세요:\n```bash\ncurl -X POST \"http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}\"\n```"
         
         # 데이터 유효성 검사 (소스 요약 포함)
         has_meaningful_data = (
@@ -543,6 +770,8 @@ Provide concrete guides that developers can utilize based on actual analysis res
             (source_summaries and source_summaries.get("summaries"))
         )
         
+        detailed_analysis_json = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
+
         if not has_meaningful_data:
             # 분석 데이터가 없는 경우 안내 메시지 포함
             prompt_templates = {
@@ -561,8 +790,8 @@ Provide concrete guides that developers can utilize based on actual analysis res
 ## 권장 사항
 1. 먼저 Git 저장소 분석을 수행하세요:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/analyze" \
+  -H "Content-Type: application/json" \
   -d '{{
     "repositories": [
       {{
@@ -578,8 +807,8 @@ curl -X POST "http://localhost:8001/api/v1/analyze" \\
 
 2. 소스코드 요약을 수행하세요:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \
+  -H "Content-Type: application/json" \
   -d '{{
     "max_files": 100,
     "batch_size": 5,
@@ -589,8 +818,8 @@ curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{
 
 3. 문서를 다시 생성하세요:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/documents/generate" \
+  -H "Content-Type: application/json" \
   -d '{{
     "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
     "document_types": ["{document_type}"],
@@ -625,10 +854,10 @@ Creating a {document_type} document for analysis ID: {analysis_data.get('analysi
 - Source code summaries: {'Available' if source_summaries and source_summaries.get("summaries") else 'Not available'}
 
 ## Recommendations
-1. First, perform Git repository analysis:
+1. First, perform Git repository analysis:)
 ```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/analyze" \
+  -H "Content-Type: application/json" \
   -d '{{
     "repositories": [
       {{
@@ -644,8 +873,8 @@ curl -X POST "http://localhost:8001/api/v1/analyze" \\
 
 2. Perform source code summarization:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \
+  -H "Content-Type: application/json" \
   -d '{{
     "max_files": 100,
     "batch_size": 5,
@@ -655,8 +884,8 @@ curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{
 
 3. Regenerate the document:
 ```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \\
-  -H "Content-Type: application/json" \\
+curl -X POST "http://localhost:8001/api/v1/documents/generate" \
+  -H "Content-Type: application/json" \
   -d '{{
     "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
     "document_types": ["{document_type}"],
@@ -701,7 +930,7 @@ This document will be updated with detailed content including actual code analys
 {key_summaries}
 
 ## 상세 분석 데이터
-{json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)}
+{detailed_analysis_json}
 
 **중요**: 위의 소스코드 요약 내용을 적극 활용하여 실제 코드 구현 내용을 반영한 실용적이고 구체적인 문서를 작성해주세요. 
 마크다운 형식으로 작성하고, 개발자가 실제로 활용할 수 있는 가이드를 제공해주세요.
@@ -725,7 +954,7 @@ Please create a {document_type} document based on the following code analysis re
 {key_summaries}
 
 ## Detailed Analysis Data
-{json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)}
+{detailed_analysis_json}
 
 **Important**: Please actively utilize the source code summary content above to create practical and specific documentation that reflects actual code implementation. 
 Write in markdown format and provide guides that developers can actually use.

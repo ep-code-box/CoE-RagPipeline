@@ -817,17 +817,37 @@ class AnalysisService:
                         else:
                             repo = repo_dict
 
-                        # 기술 스펙 분석 수행
-                        tech_spec = TechSpec(
-                            language="Python",
-                            framework="FastAPI",
-                            dependencies=["sqlalchemy", "pydantic", "fastapi"],
-                            version="3.9",
-                            package_manager="pip"
-                        )
+                        # 기술 스펙 분석 수행 - 동적 감지
+                        from utils.tech_utils import detect_tech_stack
                         
-                        # tech_specs 리스트에 추가
-                        repo.tech_specs.append(tech_spec)
+                        # 실제 프로젝트 파일들을 분석하여 기술 스택 감지
+                        clone_path = repo.clone_path if hasattr(repo, 'clone_path') and repo.clone_path else ""
+                        files = repo.files if hasattr(repo, 'files') else []
+                        
+                        if clone_path and files:
+                            detected_tech_stacks = detect_tech_stack(clone_path, files)
+                            
+                            # 감지된 기술 스택들을 TechSpec 객체로 변환
+                            for tech_data in detected_tech_stacks:
+                                tech_spec = TechSpec(
+                                    language=tech_data.get('language', 'Unknown'),
+                                    framework=tech_data.get('framework'),
+                                    dependencies=tech_data.get('dependencies', []),
+                                    version=tech_data.get('version'),
+                                    package_manager=tech_data.get('package_manager')
+                                )
+                                repo.tech_specs.append(tech_spec)
+                        else:
+                            # 클론 경로나 파일 정보가 없는 경우 기본값 사용
+                            logger.warning(f"No clone path or files available for tech spec analysis: {repo.repository.url}")
+                            tech_spec = TechSpec(
+                                language="Unknown",
+                                framework=None,
+                                dependencies=[],
+                                version=None,
+                                package_manager=None
+                            )
+                            repo.tech_specs.append(tech_spec)
                         
                         # 코드 메트릭스 업데이트
                         repo.code_metrics.maintainability_index = 85.0  # 실제 값으로 대체

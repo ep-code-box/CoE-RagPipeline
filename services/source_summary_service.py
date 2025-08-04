@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from config.settings import settings
+from utils.token_utils import TokenUtils, TokenChunk
 
 logger = logging.getLogger(__name__)
 
@@ -218,10 +219,15 @@ class SourceSummaryService:
                 logger.error(f"Failed to read file {file_path}: {e}")
                 return None
             
-            # 파일이 너무 크면 일부만 사용
-            if len(source_code) > 8000:  # 약 8KB 제한
-                source_code = source_code[:8000] + "\n... (파일이 잘렸습니다)"
-                logger.info(f"File truncated due to size: {file_path}")
+            # 파일이 너무 크면 토큰 기준으로 잘라내기
+            estimated_tokens = TokenUtils.estimate_tokens(source_code)
+            max_file_tokens = 6000  # 보수적으로 설정
+            
+            if estimated_tokens > max_file_tokens:
+                # 토큰 기준으로 잘라내기
+                target_chars = int(len(source_code) * (max_file_tokens / estimated_tokens))
+                source_code = source_code[:target_chars] + "\n... (파일이 토큰 제한으로 잘렸습니다)"
+                logger.info(f"File truncated due to token limit: {file_path} ({estimated_tokens} -> ~{max_file_tokens} tokens)")
             
             # 언어 감지
             language = self.supported_extensions.get(path.suffix.lower(), 'Unknown')
@@ -232,8 +238,22 @@ class SourceSummaryService:
             
             logger.info(f"Summarizing file: {file_path} ({language})")
             
-            # LLM 호출 (재시도 로직 포함)
+            # LLM 호출 전 토큰 수 확인
             full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+            prompt_tokens = TokenUtils.estimate_tokens(full_prompt)
+            model_limit = TokenUtils.get_model_limit(self.model, reserve_for_completion=max_tokens)
+            
+            if prompt_tokens > model_limit:
+                logger.warning(f"Prompt too large for {file_path}: {prompt_tokens} > {model_limit} tokens")
+                # 더 작은 파일 내용으로 재시도
+                smaller_target = int(len(source_code) * 0.5)  # 50%로 줄이기
+                source_code = source_code[:smaller_target] + "\n... (토큰 제한으로 추가 잘림)"
+                user_prompt = self._get_summary_user_prompt(file_path, source_code, language)
+                full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+                prompt_tokens = TokenUtils.estimate_tokens(full_prompt)
+                logger.info(f"Reduced prompt size: {prompt_tokens} tokens")
+            
+            # LLM 호출 (재시도 로직 포함)
             summary_content = await self.call_llm_with_retry(full_prompt, max_tokens)
             if not summary_content:
                 logger.error(f"Failed to get LLM response for {file_path} after retries")
