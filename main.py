@@ -8,7 +8,7 @@ from routers.enhanced import enhanced_analysis
 from config.settings import settings
 from utils.server_utils import find_available_port
 from utils.app_initializer import initialize_services
-from config.database import init_database
+from core.database import init_database
 
 # 로깅 설정 - uvicorn과 중복 방지
 logging.basicConfig(
