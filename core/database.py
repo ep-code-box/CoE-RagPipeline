@@ -5,7 +5,7 @@ CoE-Backend와 호환되는 통합 데이터베이스 모델을 사용합니다.
 
 import os
 import json
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON, Float, ForeignKey, Enum, DECIMAL
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, JSON, Float, ForeignKey, Enum, DECIMAL, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -301,12 +301,20 @@ class RagAnalysisResult(Base):
 
 # 데이터베이스 테이블 생성
 def create_tables():
-    """데이터베이스 테이블을 생성합니다."""
+    """데이터베이스에 모든 테이블을 생성합니다."""
+    print("🔄 데이터베이스 테이블 생성을 시작합니다...")
     try:
+        # Base에 정의된 모든 테이블을 생성
         Base.metadata.create_all(bind=engine)
-        print("✅ RAG Pipeline 데이터베이스 테이블이 성공적으로 생성되었습니다.")
+        print("✅ 모든 데이터베이스 테이블이 성공적으로 확인 또는 생성되었습니다.")
+        
+        # (선택 사항) 각 테이블 생성 여부 확인 로그
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+        print(f"🔍 현재 데이터베이스에 존재하는 테이블: {table_names}")
+        
     except Exception as e:
-        print(f"❌ 테이블 생성 중 오류 발생: {e}")
+        print(f"❌ 테이블 생성 중 심각한 오류 발생: {e}")
 
 # 데이터베이스 세션 의존성
 def get_db():
@@ -340,31 +348,28 @@ def test_connection():
         print(f"❌ MariaDB 연결 실패: {e}")
         return False
 
-# 데이터베이스 초기화 상태 추적 (파일 기반)
-import tempfile
-import os.path
-
-def _get_init_flag_file():
-    """초기화 플래그 파일 경로를 반환합니다."""
-    return os.path.join(tempfile.gettempdir(), 'coe_rag_db_initialized.flag')
-
+# 데이터베이스 초기화 상태 추적 (테이블 확인)
 def _is_database_initialized():
     """데이터베이스가 이미 초기화되었는지 확인합니다."""
-    flag_file = _get_init_flag_file()
-    return os.path.exists(flag_file)
-
-def _mark_database_initialized():
-    """데이터베이스 초기화 완료를 표시합니다."""
-    flag_file = _get_init_flag_file()
-    with open(flag_file, 'w') as f:
-        f.write(str(datetime.now()))
+    try:
+        inspector = inspect(engine)
+        # 'analysis_requests' 테이블이 있는지 확인하여 초기화 여부 판단
+        # 'rag_analysis_results'와 같은 다른 주요 테이블도 함께 확인 가능
+        required_tables = {'analysis_requests', 'repository_analyses', 'rag_analysis_results'}
+        existing_tables = set(inspector.get_table_names())
+        print(f"🔍 현재 데이터베이스에 존재하는 테이블: {existing_tables}")
+        return required_tables.issubset(existing_tables)
+    except Exception as e:
+        # 데이터베이스 연결 실패 등 예외 발생 시 초기화되지 않은 것으로 간주
+        print(f"⚠️ 데이터베이스 확인 중 오류 발생 (초기화 필요 가능성): {e}")
+        return False
 
 # 데이터베이스 초기화
 def init_database():
     """데이터베이스를 초기화합니다."""
     # 이미 초기화되었다면 건너뛰기
     if _is_database_initialized():
-        print("✅ Database already initialized, skipping...")
+        print("✅ 데이터베이스가 이미 초기화되었습니다. 건너뜁니다.")
         return True
         
     print("🔄 RAG Pipeline 데이터베이스 초기화 중...")
@@ -376,8 +381,12 @@ def init_database():
     # 테이블 생성
     create_tables()
     
-    # 초기화 완료 플래그 설정
-    _mark_database_initialized()
+    # 초기화 완료 후 다시 확인
+    if not _is_database_initialized():
+        print("❌ 초기화 후에도 데이터베이스 테이블이 확인되지 않았습니다.")
+        return False
+        
+    print("✅ 데이터베이스 초기화가 성공적으로 완료되었습니다.")
     return True
 
 # 분석 결과를 데이터베이스에 저장하는 함수 (백워드 호환성)
