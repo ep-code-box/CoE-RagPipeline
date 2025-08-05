@@ -78,13 +78,23 @@ class GitAnalyzer:
             logger.info(f"Cloning repository: {repository.url} to {clone_path}")
             
             # Git 레포지토리 클론
-            repo = Repo.clone_from(
-                str(repository.url),
-                clone_path,
-                branch=repository.branch or "main",
-                depth=1  # shallow clone for faster operation
-            )
-            
+            try:
+                repo = Repo.clone_from(
+                    str(repository.url),
+                    clone_path,
+                    branch=repository.branch or "main",
+                    depth=1  # shallow clone for faster operation
+                )
+            except GitCommandError as e:
+                logger.warning(f"Branch {repository.branch} not found, trying main branch: {e}")
+                # 브랜치가 없을 경우 main 브랜치로 클론 시도    
+                repo = Repo.clone_from(
+                    str(repository.url),
+                    clone_path,
+                    branch="main",
+                    depth=1  # shallow clone for faster operation
+                )
+                
             self.cloned_repos[str(repository.url)] = clone_path
             logger.info(f"Successfully cloned repository: {repository.url} to cache directory")
             
