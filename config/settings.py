@@ -18,7 +18,11 @@ class Settings:
     # 디렉토리 설정
     RESULTS_DIR: str = "output/results"
     DOCUMENTS_DIR: str = "output/documents"
-    CHROMA_PERSIST_DIRECTORY: str = "./chroma_db"
+    
+    # ChromaDB 설정
+    CHROMA_HOST: str = os.getenv("CHROMA_HOST", "localhost")
+    CHROMA_PORT: int = int(os.getenv("CHROMA_PORT", "8000"))
+    CHROMA_COLLECTION_NAME: str = os.getenv("CHROMA_COLLECTION_NAME", "coe_documents")
     
     # 데이터베이스 설정
     DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL")
@@ -49,7 +53,6 @@ class Settings:
         # 필요한 디렉토리 생성
         os.makedirs(self.RESULTS_DIR, exist_ok=True)
         os.makedirs(self.DOCUMENTS_DIR, exist_ok=True)
-        os.makedirs(self.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
 
 
 # 전역 설정 인스턴스
