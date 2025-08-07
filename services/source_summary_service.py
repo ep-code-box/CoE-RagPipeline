@@ -23,17 +23,18 @@ class SourceSummaryService:
         """소스코드 요약 서비스 초기화"""
         if not settings.SKAX_API_KEY:
             raise ValueError("SKAX_API_KEY가 설정되지 않았습니다.")
-        
-        # self.client = OpenAI(
-        #     api_key=settings.SKAX_API_KEY,
-        #     base_url=settings.SKAX_API_BASE
-        # )
-        # self.model = settings.SKAX_MODEL_NAME
-        # OPEN AI API 클라이언트 초기화
+       
+        # SKAX API 클라이언트 초기화
         self.client = OpenAI(
-            api_key=settings.OPENAI_API_KEY
+            api_key=settings.SKAX_API_KEY,
+            base_url=settings.SKAX_API_BASE
         )
-        self.model = "gpt-4o-mini"
+        self.model = settings.SKAX_MODEL_NAME
+        # OPEN AI API 클라이언트 초기화
+        # self.client = OpenAI(
+        #     api_key=settings.OPENAI_API_KEY
+        # )
+        # self.model = "gpt-4o-mini"
         
         # 지원하는 파일 확장자
         self.supported_extensions = {
