@@ -10,6 +10,7 @@ from langchain_chroma import Chroma
 from langchain.schema import Document
 
 from models.schemas import AnalysisResult, RepositoryAnalysis, ASTNode
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,25 +20,19 @@ class EmbeddingService:
     
     def __init__(self, 
                  openai_api_key: Optional[str] = None,
-                 openai_api_base: Optional[str] = None,
-                 chroma_persist_directory: str = "./chroma_db",
-                 chroma_host: Optional[str] = None,
-                 chroma_port: Optional[int] = None):
+                 openai_api_base: Optional[str] = None):
         """
         EmbeddingService 초기화
         
         Args:
             openai_api_key: OpenAI API 키
             openai_api_base: OpenAI API 베이스 URL
-            chroma_persist_directory: Chroma 데이터베이스 저장 경로
-            chroma_host: ChromaDB 호스트 (Docker 컨테이너 사용시)
-            chroma_port: ChromaDB 포트 (Docker 컨테이너 사용시)
         """
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
+        self.openai_api_key = openai_api_key or settings.OPENAI_API_KEY
         self.openai_api_base = openai_api_base or os.getenv("OPENAI_API_BASE")
-        self.chroma_persist_directory = chroma_persist_directory
-        self.chroma_host = chroma_host or os.getenv("CHROMA_HOST")
-        self.chroma_port = chroma_port or int(os.getenv("CHROMA_PORT", "8000"))
+        self.chroma_host = settings.CHROMA_HOST
+        self.chroma_port = settings.CHROMA_PORT
+        self.collection_name = settings.CHROMA_COLLECTION_NAME
         
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
@@ -57,30 +52,21 @@ class EmbeddingService:
         )
         
         # Chroma 벡터스토어 초기화
-        if self.chroma_host and self.chroma_port:
-            # Docker 컨테이너의 ChromaDB 서버에 연결
-            import chromadb
-            from chromadb.config import Settings
-            
-            chroma_client = chromadb.HttpClient(
-                host=self.chroma_host,
-                port=self.chroma_port,
-                settings=Settings(allow_reset=True, anonymized_telemetry=False)
-            )
-            
-            self.vectorstore = Chroma(
-                client=chroma_client,
-                embedding_function=self.embeddings,
-                collection_name="coe_documents"
-            )
-            logger.info(f"Connected to ChromaDB server at {self.chroma_host}:{self.chroma_port}")
-        else:
-            # 로컬 파일 시스템 사용 (기존 방식)
-            self.vectorstore = Chroma(
-                embedding_function=self.embeddings,
-                persist_directory=self.chroma_persist_directory
-            )
-            logger.info(f"Using local ChromaDB at {self.chroma_persist_directory}")
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+        
+        chroma_client = chromadb.HttpClient(
+            host=self.chroma_host,
+            port=self.chroma_port,
+            settings=ChromaSettings(allow_reset=True, anonymized_telemetry=False)
+        )
+        
+        self.vectorstore = Chroma(
+            client=chroma_client,
+            embedding_function=self.embeddings,
+            collection_name=self.collection_name
+        )
+        logger.info(f"Connected to ChromaDB server at {self.chroma_host}:{self.chroma_port}, collection: {self.collection_name}")
     
     def process_analysis_result(self, analysis_result: AnalysisResult) -> Dict[str, Any]:
         """
@@ -532,8 +518,7 @@ class EmbeddingService:
             count = collection.count()
             
             return {
-                "total_documents": count,
-                "persist_directory": self.chroma_persist_directory
+                "total_documents": count
             }
         except Exception as e:
             logger.error(f"Failed to get collection stats: {e}")
