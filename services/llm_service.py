@@ -105,16 +105,16 @@ class LLMDocumentService:
             raise ValueError("SKAX_API_KEY가 설정되지 않았습니다.")
         
         # SKAX API 클라이언트 초기화
-        # self.client = OpenAI(
-        #     api_key=settings.SKAX_API_KEY,
-        #     base_url=settings.SKAX_API_BASE
-        # )
-        # self.model = settings.SKAX_MODEL_NAME
-        # OPEN AI API 클라이언트 초기화
         self.client = OpenAI(
-            api_key=settings.OPENAI_API_KEY
+            api_key=settings.SKAX_API_KEY,
+            base_url=settings.SKAX_API_BASE
         )
-        self.model = "gpt-4o-mini"
+        self.model = settings.SKAX_MODEL_NAME
+        # OPEN AI API 클라이언트 초기화
+        # self.client = OpenAI(
+        #     api_key=settings.OPENAI_API_KEY
+        # )
+        # self.model = "gpt-4o-mini"
 
     async def generate_document(
         self,
