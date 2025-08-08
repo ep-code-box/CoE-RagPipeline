@@ -11,6 +11,7 @@ Git 리포지토리를 분석하고, AST 분석 및 기술 스택 정적 분석�
 - **리포지토리 간 분석**: 리포지토리 간의 의존성 및 유사성을 분석합니다.
 - **소스 코드 요약**: LLM을 사용하여 소스 코드 파일을 요약하고 벡터 데이터베이스에 저장합니다.
 - **자동 문서 생성**: 분석 결과를 기반으로 7가지 유형의 개발 문서를 생성합니다.
+- **RDB 스키마 임베딩**: MariaDB 데이터베이스의 스키마(테이블, 컬럼) 정보를 추출하여 RAG에 포함시킵니다.
 
 ## 🚀 시작하기
 
@@ -37,8 +38,33 @@ chmod +x run.sh
 
 ## 📂 프로젝트 구조
 
+## 📝 API 사용 예시
+
+### RDB 스키마 임베딩
+
+데이터베이스의 스키마 정보를 RAG에 추가하려면 다음 엔드포인트를 호출합니다.
+
+```bash
+curl -X POST http://localhost:8001/api/v1/embed_rdb_schema
+```
+
+### 벡터 유사도 검색
+
+저장된 벡터 데이터베이스에서 유사한 문서를 검색합니다. `group_name`을 사용하여 특정 그룹의 문서와 RDB 스키마 정보를 함께 검색할 수 있습니다.
+
+```bash
+curl -X POST "http://localhost:8001/api/v1/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "사용자 정보 테이블",
+    "k": 5,
+    "group_name": "UserService"
+  }'
+```
+
 ```
 CoE-RagPipeline/
+```
 ├── main.py                 # FastAPI 메인 애플리케이션
 ├── run.sh                  # 실행 스크립트
 ├── Dockerfile              # Docker 이미지 빌드 파일

@@ -159,3 +159,27 @@ async def get_embedding_stats():
     except Exception as e:
         logger.error(f"Failed to get embedding stats: {e}")
         raise HTTPException(status_code=500, detail=f"통계 조회 중 오류가 발생했습니다: {str(e)}")
+
+@router.post(
+    "/embed_rdb_schema",
+    response_model=Dict[str, Any],
+    summary="RDB 스키마 임베딩",
+    description="""
+    **MariaDB 데이터베이스의 스키마(테이블, 컬럼) 정보를 추출하여 임베딩하고 ChromaDB에 저장합니다.**
+    
+    이 작업을 통해 RDB의 구조를 자연어 쿼리로 검색할 수 있게 됩니다.
+    """,
+    response_description="임베딩 작업 결과"
+)
+async def embed_rdb_schema():
+    """RDB 스키마를 임베딩하여 벡터 저장소에 추가합니다."""
+    try:
+        from services.rdb_embedding_service import RDBEmbeddingService
+        rdb_embedding_service = RDBEmbeddingService()
+        result = rdb_embedding_service.extract_and_embed_schema()
+        if result["status"] == "error":
+            raise HTTPException(status_code=500, detail=result["message"])
+        return result
+    except Exception as e:
+        logger.error(f"Failed to embed RDB schema: {e}")
+        raise HTTPException(status_code=500, detail=f"RDB 스키마 임베딩 중 오류가 발생했습니다: {str(e)}")
