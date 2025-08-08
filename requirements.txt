@@ -9,6 +9,7 @@ python-multipart
 # 데이터베이스 연결
 sqlalchemy
 pymysql
+mysql-connector-python
 python-dotenv
 
 # LLM 및 Embedding 관련

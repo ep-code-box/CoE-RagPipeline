@@ -155,5 +155,9 @@ class SearchRequest(BaseModel):
     group_name: Optional[str] = None
 
 
+class SQLQueryRequest(BaseModel):
+    query: str = Field(..., description="SQL Agent에 전달할 자연어 쿼리")
+
+
 # Update forward references
 ASTNode.model_rebuild()

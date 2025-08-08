@@ -12,6 +12,7 @@ from models.schemas import (
 )
 from analyzers.git_analyzer import GitAnalyzer
 from core.database import get_db
+from services.rdb_embedding_service import RDBEmbeddingService # RDBEmbeddingService 임포트
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,8 @@ analysis_results = {}
     
     ### 📝 사용 예시
     ```bash
-    curl -X POST "http://localhost:8001/api/v1/analyze" \\
-      -H "Content-Type: application/json" \\
+    curl -X POST "http://localhost:8001/api/v1/analyze" \
+      -H "Content-Type: application/json" \
       -d '{
         "repositories": [
           {
@@ -197,6 +198,26 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
     except Exception as e:
         logger.error(f"Failed to start analysis: {e}")
         raise HTTPException(status_code=500, detail=f"분석 시작 중 오류가 발생했습니다: {str(e)}")
+
+
+@router.post(
+    "/ingest_rdb_schema",
+    summary="RDB 스키마 정보 임베딩",
+    description="""
+    **MariaDB의 스키마 정보를 추출하여 벡터 데이터베이스에 임베딩합니다.**
+    이를 통해 RDB 구조에 대한 질문에 RAG 기반으로 답변할 수 있습니다.
+    """,
+    response_description="RDB 스키마 임베딩 결과"
+)
+async def ingest_rdb_schema():
+    """RDB 스키마 정보 임베딩 - MariaDB의 테이블 및 컬럼 정보를 벡터화합니다."""
+    try:
+        rdb_embedding_service = RDBEmbeddingService()
+        result = rdb_embedding_service.extract_and_embed_schema()
+        return result
+    except Exception as e:
+        logger.error(f"Failed to ingest RDB schema: {e}")
+        raise HTTPException(status_code=500, detail=f"RDB 스키마 임베딩 중 오류가 발생했습니다: {str(e)}")
 
 
 @router.get("/results/{analysis_id}", response_model=AnalysisResult)
