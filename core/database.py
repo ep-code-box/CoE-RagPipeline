@@ -103,6 +103,7 @@ class AnalysisRequest(Base):
     include_ast = Column(Boolean, default=True)
     include_tech_spec = Column(Boolean, default=True)
     include_correlation = Column(Boolean, default=True)
+    group_name = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)

@@ -22,6 +22,7 @@ class AnalysisRequest(BaseModel):
     include_ast: bool = True
     include_tech_spec: bool = True
     include_correlation: bool = True
+    group_name: Optional[str] = None # <-- 이 줄 추가
 
 
 class FileInfo(BaseModel):
@@ -94,6 +95,7 @@ class AnalysisResult(BaseModel):
     status: AnalysisStatus
     created_at: datetime
     completed_at: Optional[datetime] = None
+    group_name: Optional[str] = None # <-- 이 줄 추가
     repositories: List[RepositoryAnalysis] = []
     correlation_analysis: Optional[CorrelationAnalysis] = None
     error_message: Optional[str] = None
@@ -142,6 +144,15 @@ class DocumentGenerationResponse(BaseModel):
     completed_at: Optional[datetime] = Field(None, description="작업 완료 시간")
     error_message: Optional[str] = Field(None, description="오류 메시지")
     generated_documents: List[GeneratedDocument] = Field(default=[], description="생성된 문서 목록")
+
+
+class SearchRequest(BaseModel):
+    query: str
+    k: int = 5
+    filter_metadata: Optional[Dict[str, Any]] = None
+    analysis_id: Optional[str] = None
+    repository_url: Optional[str] = None
+    group_name: Optional[str] = None
 
 
 # Update forward references

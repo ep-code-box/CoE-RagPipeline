@@ -67,6 +67,14 @@ class EmbeddingService:
             collection_name=self.collection_name
         )
         logger.info(f"Connected to ChromaDB server at {self.chroma_host}:{self.chroma_port}, collection: {self.collection_name}")
+
+        # LLM 클라이언트 초기화 (리랭킹용)
+        from openai import OpenAI # OpenAI 임포트
+        self.llm_client = OpenAI(
+            api_key=self.openai_api_key,
+            base_url=self.openai_api_base
+        )
+        logger.info("LLM client initialized for reranking.")
     
     def process_analysis_result(self, analysis_result: AnalysisResult) -> Dict[str, Any]:
         """
@@ -104,7 +112,8 @@ class EmbeddingService:
     def embed_source_summaries(
         self, 
         summaries: Dict[str, Any], 
-        analysis_id: str
+        analysis_id: str,
+        group_name: Optional[str] = None # <-- 이 파라미터 추가
     ) -> Dict[str, Any]:
         """
         소스코드 요약 결과를 embedding하고 Chroma에 저장
@@ -252,7 +261,8 @@ class EmbeddingService:
                     metadata={
                         "analysis_id": analysis_result.analysis_id,
                         "document_type": "correlation_analysis",
-                        "repository_count": len(analysis_result.repositories)
+                        "repository_count": len(analysis_result.repositories),
+                        "group_name": group_name # <-- 이 줄 추가
                     }
                 ))
         
@@ -397,20 +407,72 @@ class EmbeddingService:
             
             # 필터 적용하여 검색
             if filter_metadata:
-                results = self.vectorstore.similarity_search_with_score(
-                    query, k=k, filter=filter_metadata
+                initial_results = self.vectorstore.similarity_search_with_score(
+                    query, k=k*5, filter=filter_metadata # 초기 검색 결과는 더 많이 가져옴
                 )
             else:
-                results = self.vectorstore.similarity_search_with_score(query, k=k)
+                initial_results = self.vectorstore.similarity_search_with_score(query, k=k*5)
             
-            return [
-                {
+            if not initial_results:
+                return []
+
+            # LLM 기반 리랭킹
+            reranked_results = []
+            documents_to_rerank = []
+            for i, (doc, original_score) in enumerate(initial_results):
+                documents_to_rerank.append({
+                    "index": i,
                     "content": doc.page_content,
                     "metadata": doc.metadata,
-                    "score": score
-                }
-                for doc, score in results
+                    "original_score": original_score
+                })
+            
+            # LLM에 리랭킹 요청 프롬프트 구성
+            prompt_messages = [
+                {"role": "system", "content": "You are a helpful assistant that reranks documents based on their relevance to a query. Provide the reranked documents as a JSON array of objects, each with 'index' and 'rerank_score' (a float between 0 and 1)."},
+                {"role": "user", "content": f"Query: {query}\n\nDocuments to rerank (JSON array of objects with 'index' and 'content'):\n{json.dumps(documents_to_rerank, ensure_ascii=False, indent=2)}\n\nRerank these documents based on their relevance to the query. Output a JSON array of objects, each with 'index' and 'rerank_score' (a float between 0 and 1)."}
             ]
+
+            try:
+                llm_response = self.llm_client.chat.completions.create(
+                    model="gpt-4o-mini", # 리랭킹에 사용할 LLM 모델
+                    messages=prompt_messages,
+                    temperature=0.0, # 리랭킹은 창의성보다 정확성이 중요
+                    max_tokens=1024 # 충분한 응답 길이
+                )
+                
+                # LLM 응답 파싱
+                rerank_output = llm_response.choices[0].message.content
+                rerank_scores_list = json.loads(rerank_output)
+
+                # 원본 문서와 리랭크 점수를 결합
+                for item in rerank_scores_list:
+                    original_doc_info = documents_to_rerank[item["index"]]
+                    reranked_results.append({
+                        "content": original_doc_info["content"],
+                        "metadata": original_doc_info["metadata"],
+                        "original_score": original_doc_info["original_score"],
+                        "rerank_score": item["rerank_score"]
+                    })
+                
+                # 리랭크 점수를 기준으로 내림차순 정렬하고 상위 k개 선택
+                reranked_results.sort(key=lambda x: x["rerank_score"], reverse=True)
+
+            except Exception as llm_e:
+                logger.error(f"LLM reranking failed, falling back to original scores: {llm_e}")
+                # LLM 리랭킹 실패 시 원래 유사도 점수를 사용
+                reranked_results = [
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "original_score": score,
+                        "rerank_score": score # 리랭크 실패 시 원래 점수를 리랭크 점수로 사용
+                    }
+                    for doc, score in initial_results
+                ]
+                reranked_results.sort(key=lambda x: x["original_score"], reverse=True)
+
+            return reranked_results[:k]
             
         except Exception as e:
             logger.error(f"Failed to search documents: {e}")

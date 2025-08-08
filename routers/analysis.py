@@ -55,7 +55,8 @@ analysis_results = {}
         ],
         "include_ast": true,
         "include_tech_spec": true,
-        "include_correlation": true
+        "include_correlation": true,
+        "group_name": "MyTeamA" # <-- 이 줄 추가
       }'
     ```
     
@@ -131,7 +132,8 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
                 repositories=new_repositories,
                 include_ast=request.include_ast,
                 include_tech_spec=request.include_tech_spec,
-                include_correlation=request.include_correlation
+                include_correlation=request.include_correlation,
+                group_name=request.group_name # <-- 이 줄 추가
             )
         else:
             new_request = request
@@ -155,7 +157,8 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
                 include_ast=new_request.include_ast,
                 include_tech_spec=new_request.include_tech_spec,
                 include_correlation=new_request.include_correlation,
-                analysis_id=analysis_id
+                analysis_id=analysis_id,
+                group_name=new_request.group_name # <-- 이 줄 추가
             )
             logger.info(f"Created AnalysisRequest in database: {analysis_id}")
             
@@ -170,7 +173,8 @@ async def start_analysis(request: AnalysisRequest, background_tasks: BackgroundT
             created_at=datetime.now(),
             repositories=[],
             correlation_analysis=None,
-            source_summaries_used=False
+            source_summaries_used=False,
+            group_name=request.group_name # <-- 이 줄 추가
         )
         
         # 메모리 캐시에 저장
