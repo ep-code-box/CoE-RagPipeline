@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException
-from typing import List, Optional, Dict
+from fastapi import APIRouter, HTTPException, Body
+from typing import List, Optional, Dict, Any
 import os
 import logging
+
+from models.schemas import SearchRequest # SearchRequest 모델 임포트
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ router = APIRouter(
     - **메타데이터 필터링**: 파일 타입, 언어, 태그 등으로 결과 필터링
     - **분석 결과별 검색**: analysis_id로 특정 분석 결과만 검색
     - **최신 commit 우선 검색**: repository_url로 최신 commit 분석 결과 우선 검색 ⭐ **NEW**
+    - **그룹명으로 검색**: group_name으로 특정 그룹에 속한 레포지토리 분석 결과 검색 ⭐ **NEW**
     - **유사도 점수**: 각 결과의 관련성 점수 제공
     
     ### 📝 사용 예시
@@ -59,24 +62,39 @@ router = APIRouter(
         "query": "Python 함수 정의",
         "k": 5,
         "repository_url": "https://github.com/octocat/Hello-World.git"
+      }
+
+    # 특정 그룹명으로 검색 (NEW!)
+    curl -X POST "http://localhost:8001/api/v1/search" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "query": "결제 모듈",
+        "k": 5,
+        "group_name": "PaymentServiceTeam"
       }'
-    ```
     
     ### 🎯 검색 팁
     - 구체적인 키워드 사용 (예: "FastAPI 라우터" vs "웹 개발")
     - analysis_id로 특정 분석 결과만 검색하여 정확도 향상
-    - repository_url로 해당 레포지토리의 최신 commit 분석 결과만 검색 ⭐ **NEW**
+    - group_name으로 특정 그룹에 속한 레포지토리 분석 결과만 검색 ⭐ **NEW** # <-- 설명 추가
     - 메타데이터 필터로 결과 범위 제한
     - k 값 조정으로 결과 수 조절 (기본값: 5)
     """,
     response_description="유사한 문서 목록과 유사도 점수"
 )
-async def search_embeddings(query: str, k: int = 5, filter_metadata: Optional[Dict] = None, analysis_id: Optional[str] = None, repository_url: Optional[str] = None):
+async def search_embeddings(request: SearchRequest = Body(...)):
     """벡터 유사도 검색 - 의미적 검색으로 관련 문서를 찾습니다."""
     try:
         from services.embedding_service import EmbeddingService
         from config.settings import settings
         
+        query = request.query
+        k = request.k
+        filter_metadata = request.filter_metadata
+        analysis_id = request.analysis_id
+        repository_url = request.repository_url
+        group_name = request.group_name
+
         # analysis_id가 제공된 경우 필터에 추가
         if analysis_id:
             if filter_metadata is None:
@@ -84,7 +102,14 @@ async def search_embeddings(query: str, k: int = 5, filter_metadata: Optional[Di
             filter_metadata["analysis_id"] = analysis_id
             logger.info(f"Searching with analysis_id filter: {analysis_id}")
         
-        embedding_service = EmbeddingService(chroma_persist_directory=settings.CHROMA_PERSIST_DIRECTORY)
+        # group_name이 제공된 경우 필터에 추가
+        if group_name:
+            if filter_metadata is None:
+                filter_metadata = {}
+            filter_metadata["group_name"] = group_name
+            logger.info(f"Searching with group_name filter: {group_name}")
+
+        embedding_service = EmbeddingService()
         results = embedding_service.search_similar_documents(
             query, 
             k=k, 
@@ -128,7 +153,7 @@ async def get_embedding_stats():
         from services.embedding_service import EmbeddingService
         from config.settings import settings
         
-        embedding_service = EmbeddingService(chroma_persist_directory=settings.CHROMA_PERSIST_DIRECTORY)
+        embedding_service = EmbeddingService()
         stats = embedding_service.get_collection_stats()
         return stats
     except Exception as e:

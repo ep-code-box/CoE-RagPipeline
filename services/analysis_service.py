@@ -51,7 +51,8 @@ class RagAnalysisService:
                 include_ast=include_ast,
                 include_tech_spec=include_tech_spec,
                 include_correlation=include_correlation,
-                status=AnalysisStatus.PENDING
+                status=AnalysisStatus.PENDING,
+                group_name=group_name # <-- 이 줄 추가
             )
             
             db.add(db_analysis)
