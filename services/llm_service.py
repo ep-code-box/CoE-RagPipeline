@@ -9,6 +9,7 @@ import asyncio
 from openai import OpenAI
 from config.settings import settings
 from utils.token_utils import TokenUtils, TokenChunk
+from config.prompts import prompts # Import the prompts dictionary
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,6 @@ def truncate_analysis_data(analysis_data: Dict[str, Any], max_tokens: int = 1000
     분석 데이터가 너무 클 경우 중요한 부분만 남기고 잘라냅니다.
     """
     try:
-        # CustomJSONEncoder를 사용하여 직렬화
         serialized = json.dumps(analysis_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
         estimated_tokens = TokenUtils.estimate_tokens(serialized)
         
@@ -37,7 +37,6 @@ def truncate_analysis_data(analysis_data: Dict[str, Any], max_tokens: int = 1000
             
         logger.warning(f"분석 데이터가 너무 큼 ({estimated_tokens} 토큰), 잘라내기 시작)")
         
-        # 중요한 정보만 남기고 잘라내기
         truncated_data = {
             "analysis_id": analysis_data.get("analysis_id"),
             "repositories": [],
@@ -46,27 +45,40 @@ def truncate_analysis_data(analysis_data: Dict[str, Any], max_tokens: int = 1000
             "code_metrics": analysis_data.get("code_metrics", {})
         }
         
-        repos = analysis_data.get("repositories", [])[:3]
-        for repo in repos:
-            truncated_data["repositories"].append({
-                "url": str(repo.get("url", "Unknown")),
-                "branch": repo.get("branch", "main"),
-                "name": repo.get("name")
-            })
-        
-        tech_specs = analysis_data.get("tech_specs", [])[:10]
-        for spec in tech_specs:
-            truncated_data["tech_specs"].append({
-                "name": spec.get("name", "Unknown"),
-                "version": spec.get("version", "Unknown"),
-                "framework": spec.get("framework")
-            })
-        
+        # Defensively get repositories
+        repos_source = analysis_data.get("repositories", [])
+        if isinstance(repos_source, list):
+            for repo in repos_source[:3]:
+                if isinstance(repo, dict):
+                    truncated_data["repositories"].append({
+                        "url": str(repo.get("url", "Unknown")),
+                        "branch": repo.get("branch", "main"),
+                        "name": repo.get("name")
+                    })
+        else:
+            logger.warning(f"analysis_data['repositories'] is not a list, but {type(repos_source)}. Skipping.")
+
+        # Defensively get tech_specs
+        specs_source = analysis_data.get("tech_specs", [])
+        if isinstance(specs_source, list):
+            for spec in specs_source[:10]:
+                 if isinstance(spec, dict):
+                    truncated_data["tech_specs"].append({
+                        "name": spec.get("name", "Unknown"),
+                        "version": spec.get("version", "Unknown"),
+                        "framework": spec.get("framework")
+                    })
+        else:
+            logger.warning(f"analysis_data['tech_specs'] is not a list, but {type(specs_source)}. Skipping.")
+
         ast_analysis = analysis_data.get("ast_analysis", {})
-        for file_path, nodes in list(ast_analysis.items())[:5]:
-            if isinstance(nodes, list):
-                truncated_data["ast_analysis"][file_path] = nodes[:5]
-        
+        if isinstance(ast_analysis, dict):
+            for file_path, nodes in list(ast_analysis.items())[:5]:
+                if isinstance(nodes, list):
+                    truncated_data["ast_analysis"][file_path] = nodes[:5]
+        else:
+            logger.warning(f"analysis_data['ast_analysis'] is not a dict, but {type(ast_analysis)}. Skipping.")
+
         truncated_serialized = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
         final_tokens = TokenUtils.estimate_tokens(truncated_serialized)
         
@@ -75,10 +87,11 @@ def truncate_analysis_data(analysis_data: Dict[str, Any], max_tokens: int = 1000
         return truncated_data
         
     except Exception as e:
-        logger.error(f"분석 데이터 잘라내기 실패: {e}")
+        logger.error(f"분석 데이터 잘라내기 실패: {e}", exc_info=True) # Add exc_info for more details
+        # Return a safe, minimal structure on failure
         return {
             "analysis_id": analysis_data.get("analysis_id"),
-            "repositories": analysis_data.get("repositories", [])[:1],
+            "repositories": [],
             "tech_specs": [],
             "ast_analysis": {},
             "code_metrics": {}
@@ -94,16 +107,13 @@ class DocumentType(str, Enum):
     TECHNICAL_SPECIFICATION = "technical_specification"
     DEPLOYMENT_GUIDE = "deployment_guide"
     TROUBLESHOOTING_GUIDE = "troubleshooting_guide"
-
+    ANALYSIS_SUMMARY = "analysis_summary" # Added from prompts.py
 
 class LLMDocumentService:
     """LLM을 활용한 문서 생성 서비스"""
     
     def __init__(self):
         """LLM 서비스 초기화"""
-        if not settings.SKAX_API_KEY:
-            raise ValueError("SKAX_API_KEY가 설정되지 않았습니다.")
-        
         # SKAX API 클라이언트 초기화
         self.client = OpenAI(
             api_key=settings.SKAX_API_KEY,
@@ -153,7 +163,7 @@ class LLMDocumentService:
             logger.info(f"문서 생성 시작: {document_type}, 언어: {language}")
             
             # 토큰 수 확인 및 청킹 여부 결정
-            total_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+            total_prompt = f"""System: {system_prompt}\n\nUser: {user_prompt}"""
             estimated_tokens = TokenUtils.estimate_tokens(total_prompt)
             model_limit = TokenUtils.get_model_limit(self.model, reserve_for_completion=4000)
             
@@ -162,6 +172,7 @@ class LLMDocumentService:
             # 모델 제한의 95%를 기준으로 청킹 여부 결정 (보수적 접근)
             conservative_limit = model_limit * 0.95
             if enable_chunking and estimated_tokens > conservative_limit:
+
                 # 청킹 처리
                 logger.info(f"토큰 제한 초과 (보수적 기준 적용), 청킹 처리 시작: {estimated_tokens} > {conservative_limit}")
                 result = await self._generate_document_with_chunking(
@@ -344,69 +355,20 @@ class LLMDocumentService:
         total_chunks: int
     ) -> str:
         """청크별 시스템 프롬프트 생성"""
-        chunk_info = f"이것은 전체 {total_chunks}개 청크 중 {chunk.chunk_index + 1}번째 청크입니다."
-        
-        if language == "korean":
-            chunk_instruction = f"""
-{original_system_prompt}
-
-{chunk_info}
-이 청크의 내용을 바탕으로 문서의 해당 부분을 작성해주세요. 
-다른 청크와 연결될 수 있도록 일관성 있는 톤과 스타일을 유지해주세요.
-청크 번호를 명시하여 구조화된 문서를 작성해주세요.
-"""
-        else:
-            chunk_instruction = f"""
-{original_system_prompt}
-
-{chunk_info}
-Based on this chunk's content, write the corresponding part of the document.
-Maintain consistent tone and style so it can be connected with other chunks.
-Structure the document by clearly indicating the chunk number.
-"""
-        
-        return chunk_instruction
+        # Load from prompts.py
+        chunk_instruction_template = prompts["chunk_system_prompts"][language]
+        return chunk_instruction_template.format(
+            original_system_prompt=original_system_prompt,
+            total_chunks=total_chunks,
+            chunk_index=chunk.chunk_index + 1 # 0-based to 1-based
+        )
     
     def _get_system_prompt(self, document_type: DocumentType, language: str) -> str:
         """문서 타입별 시스템 프롬프트 생성"""
-        
-        base_prompt = {
-            "korean": "당신은 소프트웨어 개발 전문가이자 기술 문서 작성 전문가입니다.",
-            "english": "You are a software development expert and technical documentation specialist."
-        }
-        
-        type_specific_prompts = {
-            DocumentType.DEVELOPMENT_GUIDE: {
-                "korean": "코드 분석 결과를 바탕으로 개발자를 위한 실용적인 개발 가이드를 작성해주세요. 코딩 컨벤션, 아키텍처 패턴, 모범 사례를 포함해야 합니다.",
-                "english": "Create a practical development guide for developers based on code analysis results. Include coding conventions, architecture patterns, and best practices."
-            },
-            DocumentType.API_DOCUMENTATION: {
-                "korean": "분석된 코드에서 API 엔드포인트와 함수들을 바탕으로 상세한 API 문서를 작성해주세요. 요청/응답 예시와 사용법을 포함해야 합니다.",
-                "english": "Create detailed API documentation based on analyzed API endpoints and functions. Include request/response examples and usage instructions."
-            },
-            DocumentType.ARCHITECTURE_OVERVIEW: {
-                "korean": "코드 구조와 의존성 분석을 바탕으로 시스템 아키텍처 개요를 작성해주세요. 컴포넌트 간 관계와 데이터 흐름을 설명해야 합니다.",
-                "english": "Create a system architecture overview based on code structure and dependency analysis. Explain component relationships and data flow."
-            },
-            DocumentType.CODE_REVIEW_SUMMARY: {
-                "korean": "코드 분석 결과를 바탕으로 코드 리뷰 요약을 작성해주세요. 발견된 이슈, 개선 사항, 권장사항을 포함해야 합니다.",
-                "english": "Create a code review summary based on analysis results. Include identified issues, improvements, and recommendations."
-            },
-            DocumentType.TECHNICAL_SPECIFICATION: {
-                "korean": "분석된 기술 스택과 의존성을 바탕으로 기술 명세서를 작성해주세요. 사용된 기술, 버전, 설정 정보를 포함해야 합니다.",
-                "english": "Create technical specifications based on analyzed tech stack and dependencies. Include technologies used, versions, and configuration information."
-            },
-            DocumentType.DEPLOYMENT_GUIDE: {
-                "korean": "프로젝트 구조와 의존성을 바탕으로 배포 가이드를 작성해주세요. 환경 설정, 빌드 과정, 배포 단계를 포함해야 합니다.",
-                "english": "Create a deployment guide based on project structure and dependencies. Include environment setup, build process, and deployment steps."
-            },
-            DocumentType.TROUBLESHOOTING_GUIDE: {
-                "korean": "코드 분석에서 발견된 잠재적 문제점들을 바탕으로 문제 해결 가이드를 작성해주세요. 일반적인 오류와 해결 방법을 포함해야 합니다.",
-                "english": "Create a troubleshooting guide based on potential issues found in code analysis. Include common errors and their solutions."
-            }
-        }
-        
-        return f"{base_prompt[language]} {type_specific_prompts[document_type][language]}"
+        # Load from prompts.py
+        base_prompt = prompts["system_prompts"]["base_prompt"][language]
+        type_specific_prompt = prompts["system_prompts"][document_type.value][language]
+        return f"{base_prompt} {type_specific_prompt}"
     
     def _get_user_prompt(self, document_type: DocumentType, analysis_data: Dict[str, Any], language: str) -> str:
         """분석 데이터를 바탕으로 사용자 프롬프트 생성"""
@@ -475,165 +437,27 @@ Structure the document by clearly indicating the chunk number.
         detailed_analysis_json = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
 
         if not has_meaningful_data:
-            # 분석 데이터가 없는 경우 안내 메시지 포함
-            prompt_templates = {
-                "korean": f"""
-다음 분석 ID에 대한 {document_type} 문서를 작성해주세요: {analysis_data.get('analysis_id', 'Unknown')}
-
-⚠️ **중요 안내**: 현재 분석 결과에 충분한 데이터가 없습니다.
-
-## 현재 상태
-- 분석 대상 저장소: {len(repositories)}개
-- 기술 스택 정보: {len(tech_specs)}개  
-- AST 분석 결과: {len(ast_analysis)}개 파일
-- 코드 메트릭: {'있음' if code_metrics and any(code_metrics.values()) else '없음'}
-
-## 권장 사항
-1. 먼저 `/api/v1/analyze` 엔드포인트로 Git 저장소 분석을 수행하세요
-2. 분석 옵션을 다음과 같이 설정하세요:
-   - `include_ast: true` (코드 구조 분석)
-   - `include_tech_spec: true` (기술 스택 분석)
-   - `include_correlation: true` (연관성 분석)
-
-## 기본 {document_type} 템플릿
-
-아래는 일반적인 {document_type} 문서의 기본 구조입니다. 실제 분석 결과가 있을 때 더 구체적인 내용으로 업데이트됩니다.
-
-### 1. 개요
-이 문서는 코드 분석 결과를 바탕으로 작성된 {document_type}입니다.
-
-### 2. 분석 수행 방법
-```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "repositories": [
-      {{
-        "url": "https://github.com/your-repo/project.git",
-        "branch": "main"
-      }}
-    ],
-    "include_ast": true,
-    "include_tech_spec": true,
-    "include_correlation": true
-  }}'
-```
-
-### 3. 문서 재생성
-분석 완료 후 다음 명령으로 문서를 다시 생성하세요:
-```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
-    "document_types": ["{document_type}"],
-    "language": "korean"
-  }}'
-```
-
-분석이 완료되면 이 문서가 실제 코드 분석 결과를 포함한 상세한 내용으로 업데이트됩니다.
-""",
-                "english": f"""
-Creating a {document_type} document for analysis ID: {analysis_data.get('analysis_id', 'Unknown')}
-
-⚠️ **Important Notice**: The current analysis results do not contain sufficient data.
-
-## Current Status
-- Analyzed repositories: {len(repositories)}
-- Tech stack information: {len(tech_specs)} items
-- AST analysis results: {len(ast_analysis)} files
-- Code metrics: {'Available' if code_metrics and any(code_metrics.values()) else 'Not available'}
-
-## Recommendations
-1. First, perform Git repository analysis using the `/api/v1/analyze` endpoint
-2. Set analysis options as follows:
-   - `include_ast: true` (for code structure analysis)
-   - `include_tech_spec: true` (for tech stack analysis)
-   - `include_correlation: true` (for correlation analysis)
-
-## Basic {document_type} Template
-
-Below is the basic structure of a typical {document_type} document. It will be updated with more specific content when actual analysis results are available.
-
-### 1. Overview
-This document is a {document_type} created based on code analysis results.
-
-### 2. How to Perform Analysis
-```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "repositories": [
-      {{
-        "url": "https://github.com/your-repo/project.git",
-        "branch": "main"
-      }}
-    ],
-    "include_ast": true,
-    "include_tech_spec": true,
-    "include_correlation": true
-  }}'
-```
-
-### 3. Document Regeneration
-After analysis completion, regenerate the document with:
-```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
-    "document_types": ["{document_type}"],
-    "language": "english"
-  }}'
-```
-
-This document will be updated with detailed content including actual code analysis results once the analysis is completed.
-"""
-            }
+            # Load from prompts.py
+            prompt_template = prompts["user_prompts"]["no_data_template"][language]
+            return prompt_template.format(
+                document_type=document_type.value,
+                analysis_id=analysis_data.get('analysis_id', 'Unknown'),
+                num_repositories=len(repositories),
+                num_tech_specs=len(tech_specs),
+                num_ast_files=len(ast_analysis),
+                code_metrics_status=('있음' if code_metrics and any(code_metrics.values()) else '없음') if language == 'korean' else ('Available' if code_metrics and any(code_metrics.values()) else 'Not available')
+            )
         else:
-            # 분석 데이터가 있는 경우 기존 로직 사용
-            prompt_templates = {
-                "korean": f"""
-다음 코드 분석 결과를 바탕으로 {document_type} 문서를 작성해주세요:
-
-## 분석 대상 저장소
-{repo_info}
-
-## 기술 스택
-{tech_info}
-
-## 코드 분석 결과
-{ast_info}
-{metrics_info}
-
-## 상세 분석 데이터
-{detailed_analysis_json}
-
-마크다운 형식으로 작성하고, 실용적이고 구체적인 내용을 포함해주세요.
-실제 분석 결과를 바탕으로 개발자가 활용할 수 있는 구체적인 가이드를 제공해주세요.
-""",
-                "english": f"""
-Please create a {document_type} document based on the following code analysis results:
-
-## Analyzed Repositories
-{repo_info}
-
-## Tech Stack
-{tech_info}
-
-## Code Analysis Results
-{ast_info}
-{metrics_info}
-
-## Detailed Analysis Data
-{detailed_analysis_json}
-
-Please write in markdown format and include practical and specific content.
-Provide concrete guides that developers can utilize based on actual analysis results.
-"""
-            }
-        
-        return prompt_templates[language]
+            # Load from prompts.py
+            prompt_template = prompts["user_prompts"]["with_data_template"][language]
+            return prompt_template.format(
+                document_type=document_type.value,
+                repo_info=repo_info,
+                tech_info=tech_info,
+                ast_info=ast_info,
+                metrics_info=metrics_info,
+                detailed_analysis_json=detailed_analysis_json
+            )
     
     async def generate_document_with_source_summaries(
         self,
@@ -681,6 +505,12 @@ Provide concrete guides that developers can utilize based on actual analysis res
     ) -> str:
         """소스코드 요약을 포함한 향상된 사용자 프롬프트 생성"""
         
+        # Safely get the prompt section, falling back to user_prompts
+        prompt_section = prompts.get("enhanced_user_prompts")
+        if not prompt_section:
+            logger.warning("Could not find 'enhanced_user_prompts' in config, falling back to 'user_prompts'.")
+            prompt_section = prompts.get("user_prompts", {})
+
         # 분석 데이터가 너무 클 경우 잘라내기
         truncated_data = truncate_analysis_data(analysis_data, max_tokens=settings.MAX_ANALYSIS_DATA_TOKENS)
 
@@ -758,14 +588,14 @@ Provide concrete guides that developers can utilize based on actual analysis res
             file_summaries = source_summaries["summaries"]
             sorted_files = sorted(file_summaries.items(), 
                                 key=lambda x: x[1].get("file_size", 0), reverse=True)[:10]
-            
+
             key_summaries = "\n\n### 주요 소스파일 요약\n"
             for file_path, summary in sorted_files:
                 key_summaries += f"\n**{file_path}** ({summary.get('language', 'Unknown')}):\n"
                 key_summaries += f"{summary.get('summary', '요약 없음')}\n"
         else:
             key_summaries = f"\n\n### 소스코드 요약 안내\n소스코드 요약을 위해 다음 API를 사용하세요:\n```bash\ncurl -X POST \"http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}\"\n```"
-        
+
         # 데이터 유효성 검사 (소스 요약 포함)
         has_meaningful_data = (
             len(repositories) > 0 or 
@@ -778,195 +608,28 @@ Provide concrete guides that developers can utilize based on actual analysis res
         detailed_analysis_json = json.dumps(truncated_data, ensure_ascii=False, indent=2, cls=CustomJSONEncoder)
 
         if not has_meaningful_data:
-            # 분석 데이터가 없는 경우 안내 메시지 포함
-            prompt_templates = {
-                "korean": f"""
-다음 분석 ID에 대한 {document_type} 문서를 작성해주세요: {analysis_data.get('analysis_id', 'Unknown')}
-
-⚠️ **중요 안내**: 현재 분석 결과와 소스코드 요약에 충분한 데이터가 없습니다.
-
-## 현재 상태
-- 분석 대상 저장소: {len(repositories)}개
-- 기술 스택 정보: {len(tech_specs)}개  
-- AST 분석 결과: {len(ast_analysis)}개 파일
-- 코드 메트릭: {'있음' if code_metrics and any(code_metrics.values()) else '없음'}
-- 소스코드 요약: {'있음' if source_summaries and source_summaries.get("summaries") else '없음'}
-
-## 권장 사항
-1. 먼저 Git 저장소 분석을 수행하세요:
-```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "repositories": [
-      {{
-        "url": "https://github.com/your-repo/project.git",
-        "branch": "main"
-      }}
-    ],
-    "include_ast": true,
-    "include_tech_spec": true,
-    "include_correlation": true
-  }}'
-```
-
-2. 소스코드 요약을 수행하세요:
-```bash
-curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "max_files": 100,
-    "batch_size": 5,
-    "embed_to_vector_db": true
-  }}'
-```
-
-3. 문서를 다시 생성하세요:
-```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
-    "document_types": ["{document_type}"],
-    "language": "korean"
-  }}'
-```
-
-## 기본 {document_type} 템플릿
-
-아래는 일반적인 {document_type} 문서의 기본 구조입니다. 실제 분석 결과와 소스코드 요약이 있을 때 더 구체적인 내용으로 업데이트됩니다.
-
-### 1. 개요
-이 문서는 코드 분석 결과와 소스코드 요약을 바탕으로 작성된 {document_type}입니다.
-
-### 2. 완전한 분석을 위한 단계
-1. **Git 저장소 분석**: 코드 구조, 기술 스택, 의존성 분석
-2. **소스코드 요약**: 실제 코드 내용을 LLM이 분석하여 요약
-3. **문서 생성**: 분석 결과와 소스코드 요약을 바탕으로 실용적인 문서 생성
-
-분석이 완료되면 이 문서가 실제 코드 분석 결과와 소스코드 요약을 포함한 상세한 내용으로 업데이트됩니다.
-""",
-                "english": f"""
-Creating a {document_type} document for analysis ID: {analysis_data.get('analysis_id', 'Unknown')}
-
-⚠️ **Important Notice**: The current analysis results and source code summaries do not contain sufficient data.
-
-## Current Status
-- Analyzed repositories: {len(repositories)}
-- Tech stack information: {len(tech_specs)} items
-- AST analysis results: {len(ast_analysis)} files
-- Code metrics: {'Available' if code_metrics and any(code_metrics.values()) else 'Not available'}
-- Source code summaries: {'Available' if source_summaries and source_summaries.get("summaries") else 'Not available'}
-
-## Recommendations
-1. First, perform Git repository analysis:)
-```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "repositories": [
-      {{
-        "url": "https://github.com/your-repo/project.git",
-        "branch": "main"
-      }}
-    ],
-    "include_ast": true,
-    "include_tech_spec": true,
-    "include_correlation": true
-  }}'
-```
-
-2. Perform source code summarization:
-```bash
-curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/{analysis_data.get('analysis_id', 'your-analysis-id')}" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "max_files": 100,
-    "batch_size": 5,
-    "embed_to_vector_db": true
-  }}'
-```
-
-3. Regenerate the document:
-```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate" \
-  -H "Content-Type: application/json" \
-  -d '{{
-    "analysis_id": "{analysis_data.get('analysis_id', 'your-analysis-id')}",
-    "document_types": ["{document_type}"],
-    "language": "english"
-  }}'
-```
-
-## Basic {document_type} Template
-
-Below is the basic structure of a typical {document_type} document. It will be updated with more specific content when actual analysis results and source code summaries are available.
-
-### 1. Overview
-This document is a {document_type} created based on code analysis results and source code summaries.
-
-### 2. Steps for Complete Analysis
-1. **Git Repository Analysis**: Code structure, tech stack, and dependency analysis
-2. **Source Code Summarization**: LLM analyzes and summarizes actual code content
-3. **Document Generation**: Creates practical documentation based on analysis results and source code summaries
-
-This document will be updated with detailed content including actual code analysis results and source code summaries once the analysis is completed.
-"""
-            }
+            prompt_template = prompt_section.get("no_data_template", {}).get(language, "")
+            return prompt_template.format(
+                document_type=document_type.value,
+                analysis_id=analysis_data.get('analysis_id', 'Unknown'),
+                num_repositories=len(repositories),
+                num_tech_specs=len(tech_specs),
+                num_ast_files=len(ast_analysis),
+                code_metrics_status=('있음' if code_metrics and any(code_metrics.values()) else '없음') if language == 'korean' else ('Available' if code_metrics and any(code_metrics.values()) else 'Not available'),
+                source_summary_status=('있음' if source_summaries and source_summaries.get("summaries") else '없음') if language == 'korean' else ('Available' if source_summaries and source_summaries.get("summaries") else 'Not available')
+            )
         else:
-            # 분석 데이터가 있는 경우 기존 로직 사용
-            prompt_templates = {
-                "korean": f"""
-다음 코드 분석 결과와 실제 소스코드 요약을 바탕으로 {document_type} 문서를 작성해주세요:
-
-## 분석 대상 저장소
-{repo_info}
-
-## 기술 스택
-{tech_info}
-
-## 코드 분석 결과
-{ast_info}
-{metrics_info}
-
-## 소스코드 요약 정보
-{source_summary_info}
-
-{key_summaries}
-
-## 상세 분석 데이터
-{detailed_analysis_json}
-
-**중요**: 위의 소스코드 요약 내용을 적극 활용하여 실제 코드 구현 내용을 반영한 실용적이고 구체적인 문서를 작성해주세요. 
-마크다운 형식으로 작성하고, 개발자가 실제로 활용할 수 있는 가이드를 제공해주세요.
-""",
-                "english": f"""
-Please create a {document_type} document based on the following code analysis results and actual source code summaries:
-
-## Analyzed Repositories
-{repo_info}
-
-## Tech Stack
-{tech_info}
-
-## Code Analysis Results
-{ast_info}
-{metrics_info}
-
-## Source Code Summary Information
-{source_summary_info}
-
-{key_summaries}
-
-## Detailed Analysis Data
-{detailed_analysis_json}
-
-**Important**: Please actively utilize the source code summary content above to create practical and specific documentation that reflects actual code implementation. 
-Write in markdown format and provide guides that developers can actually use.
-"""
-            }
-        
-        return prompt_templates[language]
+            prompt_template = prompt_section.get("with_data_template", {}).get(language, "")
+            return prompt_template.format(
+                document_type=document_type.value,
+                repo_info=repo_info,
+                tech_info=tech_info,
+                ast_info=ast_info,
+                metrics_info=metrics_info,
+                source_summary_info=source_summary_info,
+                key_summaries=key_summaries,
+                detailed_analysis_json=detailed_analysis_json
+            )
     
     async def generate_multiple_documents(
         self,
@@ -1031,7 +694,7 @@ Write in markdown format and provide guides that developers can actually use.
         try:
             from services.source_summary_service import SourceSummaryService
             source_summary_service = SourceSummaryService()
-            source_summaries = source_summary_service.get_repository_summaries(analysis_id)
+            source_summaries = source_summary_service.load_repository_summaries(analysis_id)
             
             if not source_summaries or not source_summaries.get("summaries"):
                 logger.warning(f"No source summaries found for analysis {analysis_id}, falling back to basic document generation")
