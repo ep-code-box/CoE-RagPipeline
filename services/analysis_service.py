@@ -38,6 +38,7 @@ class RagAnalysisService:
         include_ast: bool = True,
         include_tech_spec: bool = True,
         include_correlation: bool = True,
+        group_name: Optional[str] = None,
         analysis_id: Optional[str] = None
     ) -> AnalysisRequest:
         """새로운 분석 요청을 생성합니다."""
@@ -51,8 +52,9 @@ class RagAnalysisService:
                 include_ast=include_ast,
                 include_tech_spec=include_tech_spec,
                 include_correlation=include_correlation,
+                group_name=group_name,
                 status=AnalysisStatus.PENDING,
-                group_name=group_name # <-- 이 줄 추가
+                
             )
             
             db.add(db_analysis)
@@ -631,7 +633,7 @@ class AnalysisService:
                         documentation_files=documentation_files,
                         commit_info=commit_info,
                         tech_specs=[],  # 기술스펙 분석에서 채워짐
-                        ast_analysis={}  # AST 분석에서 채워짐
+                        ast_analysis={}
                     )
                     
                     if analysis_id in analysis_results:
@@ -875,14 +877,13 @@ class AnalysisService:
     async def _generate_analysis_documents(self, analysis_id: str, analysis_result):
         """분석 완료 후 LLM을 사용하여 문서를 자동 생성합니다 (소스코드 요약 포함)."""
         try:
-            logger.info(f"Starting enhanced document generation for analysis {analysis_id}")
+            logger.info(f"Starting document generation for analysis {analysis_id}")
             
-            # 서비스 초기화
             llm_service = LLMDocumentService()
             summary_service = SourceSummaryService()
             embedding_service = EmbeddingService()
             
-            # 분석 결과를 딕셔너리로 변환
+            # --- 1. Gather Raw Analysis Data ---
             analysis_data = {
                 "analysis_id": analysis_id,
                 "repositories": [],
@@ -890,168 +891,82 @@ class AnalysisService:
                 "ast_analysis": {},
                 "code_metrics": {}
             }
-            
-            # 저장소 정보 추출 및 소스코드 요약 수행
-            source_summaries = None
             clone_paths = []
-            
             if hasattr(analysis_result, 'repositories') and analysis_result.repositories:
                 for repo in analysis_result.repositories:
-                    repo_data = {
-                        "url": repo.repository.url if hasattr(repo, 'repository') else "Unknown",
+                    analysis_data["repositories"].append({
+                        "url": str(repo.repository.url) if hasattr(repo, 'repository') else "Unknown",
                         "branch": repo.repository.branch if hasattr(repo, 'repository') else "main",
                         "name": repo.repository.name if hasattr(repo, 'repository') else None
-                    }
-                    analysis_data["repositories"].append(repo_data)
-                    
-                    # 클론 경로 수집 (소스코드 요약용)
+                    })
                     if hasattr(repo, 'clone_path') and repo.clone_path:
                         clone_paths.append(repo.clone_path)
-                    
-                    # 기술 스펙 정보 추가
                     if hasattr(repo, 'tech_specs') and repo.tech_specs:
-                        for tech_spec in repo.tech_specs:
-                            tech_data = {
-                                "name": tech_spec.language if hasattr(tech_spec, 'language') else "Unknown",
-                                "version": tech_spec.version if hasattr(tech_spec, 'version') else "Unknown",
-                                "framework": tech_spec.framework if hasattr(tech_spec, 'framework') else None,
-                                "dependencies": tech_spec.dependencies if hasattr(tech_spec, 'dependencies') else []
-                            }
-                            analysis_data["tech_specs"].append(tech_data)
-                    
-                    # AST 분석 정보 추가
-                    if hasattr(repo, 'ast_analysis') and repo.ast_analysis:
+                        analysis_data["tech_specs"].extend([spec.dict() for spec in repo.tech_specs])
+                    if hasattr(repo, 'ast_analysis'):
                         analysis_data["ast_analysis"].update(repo.ast_analysis)
-                    
-                    # 코드 메트릭 정보 추가
-                    if hasattr(repo, 'code_metrics') and repo.code_metrics:
-                        metrics = repo.code_metrics
-                        analysis_data["code_metrics"] = {
-                            "total_files": metrics.total_files if hasattr(metrics, 'total_files') else 0,
-                            "total_lines": metrics.total_lines if hasattr(metrics, 'total_lines') else 0,
-                            "cyclomatic_complexity": metrics.cyclomatic_complexity if hasattr(metrics, 'cyclomatic_complexity') else 0,
-                            "maintainability_index": metrics.maintainability_index if hasattr(metrics, 'maintainability_index') else 0
-                        }
-            
-            # 소스코드 요약 수행 (첫 번째 클론 경로 사용)
+                    if hasattr(repo, 'code_metrics') and hasattr(repo.code_metrics, 'dict'):
+                        analysis_data["code_metrics"].update(repo.code_metrics.dict())
+
+            # --- 2. Get Source Summaries ---
+            source_summaries = None
             if clone_paths:
                 try:
                     logger.info(f"Starting source code summarization for analysis {analysis_id}")
                     source_summaries = await summary_service.summarize_repository_sources(
-                        clone_path=clone_paths[0],
-                        analysis_id=analysis_id,
-                        max_files=100,  # 성능을 위해 최대 100개 파일로 제한
-                        batch_size=5
+                        clone_path=clone_paths[0], analysis_id=analysis_id, max_files=100, batch_size=5
                     )
-                    
-                    # 소스코드 요약을 vectorDB에 저장
                     if source_summaries and source_summaries.get("summaries"):
-                        embedding_result = embedding_service.embed_source_summaries(
-                            summaries=source_summaries,
-                            analysis_id=analysis_id
-                        )
-                        logger.info(f"Source summaries embedded: {embedding_result}")
-                    
+                        embedding_service.embed_source_summaries(summaries=source_summaries, analysis_id=analysis_id)
+                        logger.info(f"Source summaries embedded for analysis {analysis_id}")
                 except Exception as e:
                     logger.error(f"Failed to summarize source code for analysis {analysis_id}: {str(e)}")
-                    # 요약 실패해도 기존 방식으로 문서 생성 계속 진행
                     source_summaries = None
-            
-            # 기본 문서 타입들 자동 생성
+
+            # --- 3. Generate Documents ---
             default_document_types = [
                 LLMDocumentType.DEVELOPMENT_GUIDE,
                 LLMDocumentType.TECHNICAL_SPECIFICATION,
                 LLMDocumentType.ARCHITECTURE_OVERVIEW
             ]
             
-            # 소스코드 요약이 있으면 향상된 방식으로, 없으면 기존 방식으로 문서 생성
-            generated_documents = []
-            
-            for doc_type in default_document_types:
-                try:
-                    if source_summaries and source_summaries.get("summaries"):
-                        # 소스코드 요약을 포함한 향상된 문서 생성
-                        doc = await llm_service.generate_document_with_source_summaries(
-                            analysis_data=analysis_data,
-                            source_summaries=source_summaries,
-                            document_type=doc_type,
-                            language="korean"
-                        )
-                    else:
-                        # 기존 방식으로 문서 생성
-                        doc = await llm_service.generate_document(
-                            analysis_data=analysis_data,
-                            document_type=doc_type,
-                            language="korean"
-                        )
-                    
-                    generated_documents.append(doc)
-                    
-                except Exception as e:
-                    logger.error(f"Failed to generate document {doc_type}: {str(e)}")
-                    # 실패한 문서도 결과에 포함 (오류 정보와 함께)
-                    generated_documents.append({
-                        "document_type": doc_type,
-                        "language": "korean",
-                        "error": str(e),
-                        "generated_at": datetime.now().isoformat(),
-                        "analysis_id": analysis_id
-                    })
-            
-            # 생성된 문서들을 파일로 저장
+            if source_summaries and source_summaries.get("summaries"):
+                 generated_documents = await llm_service.generate_documents_with_source_summaries(
+                     analysis_data=analysis_data,
+                     analysis_id=analysis_id,
+                     document_types=default_document_types,
+                     language="korean"
+                 )
+            else:
+                generated_documents = await llm_service.generate_multiple_documents(
+                    analysis_data=analysis_data,
+                    document_types=default_document_types,
+                    language="korean"
+                )
+
+            # --- 4. Save Documents ---
             import os
             documents_dir = f"output/documents/{analysis_id}"
             os.makedirs(documents_dir, exist_ok=True)
             
             for doc in generated_documents:
-                if "error" not in doc:  # 성공적으로 생성된 문서만 저장
-                    doc_filename = f"{doc['document_type']}_{doc['language']}.md"
+                if "error" not in doc:
+                    doc_filename = f"{doc.get('document_type', 'unknown')}_{doc.get('language', 'unknown')}.md"
                     doc_path = os.path.join(documents_dir, doc_filename)
-                    
                     with open(doc_path, 'w', encoding='utf-8') as f:
-                        f.write(doc['content'])
-                    
-                    logger.info(f"Enhanced document saved: {doc_path}")
+                        f.write(doc.get('content', ''))
+                    logger.info(f"Document saved: {doc_path}")
                 else:
-                    logger.error(f"Failed to generate document {doc['document_type']}: {doc.get('error')}")
-            
-            # 문서 생성 결과를 분석 결과에 추가
+                    logger.error(f"Failed to generate document {doc.get('document_type')}: {doc.get('error')}")
+
             analysis_result.generated_documents = generated_documents
+            if hasattr(analysis_result, 'source_summaries_used'):
+                analysis_result.source_summaries_used = source_summaries is not None
             
-            # 백워드 호환성을 위해 source_summaries_used 필드가 있는지 확인 후 설정
-            try:
-                # Pydantic 모델에서 안전하게 필드 설정
-                if hasattr(analysis_result, 'source_summaries_used'):
-                    analysis_result.source_summaries_used = source_summaries is not None
-                else:
-                    # 필드가 없는 경우 새로운 AnalysisResult 객체 생성
-                    from models.schemas import AnalysisResult
-                    
-                    # 기존 데이터를 딕셔너리로 변환
-                    result_dict = analysis_result.model_dump() if hasattr(analysis_result, 'model_dump') else analysis_result.dict()
-                    
-                    # source_summaries_used 필드 추가
-                    result_dict['source_summaries_used'] = source_summaries is not None
-                    
-                    # 새로운 객체로 교체
-                    analysis_result = AnalysisResult(**result_dict)
-                    
-                    # 메모리 캐시 업데이트 (analysis_results가 전역 변수인 경우)
-                    try:
-                        from routers.analysis import analysis_results
-                        if analysis_id in analysis_results:
-                            analysis_results[analysis_id] = analysis_result
-                    except ImportError:
-                        pass  # analysis_results를 import할 수 없는 경우 무시
-                        
-            except Exception as e:
-                logger.warning(f"Could not set source_summaries_used field: {e}")
-                # 필드 설정에 실패해도 문서 생성은 계속 진행
-            
-            logger.info(f"Document generation completed for analysis {analysis_id}. Generated {len([d for d in generated_documents if 'error' not in d])} documents.")
-            
+            logger.info(f"Document generation process completed for analysis {analysis_id}.")
+
         except Exception as e:
-            logger.error(f"Document generation failed for analysis {analysis_id}: {e}")
+            logger.error(f"Document generation failed for analysis {analysis_id}: {e}", exc_info=True)
             raise
     
     def load_analysis_result(self, analysis_id: str):
