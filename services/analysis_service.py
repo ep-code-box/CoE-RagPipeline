@@ -17,6 +17,7 @@ from services.llm_service import LLMDocumentService, DocumentType as LLMDocument
 from services.source_summary_service import SourceSummaryService
 from services.embedding_service import EmbeddingService
 from services.analysis_result_service import AnalysisResultService
+from services.document_generation_service import DocumentGenerationService
 
 # 모듈 레벨 logger 정의
 logger = logging.getLogger(__name__)

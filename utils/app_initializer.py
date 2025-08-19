@@ -1,5 +1,6 @@
 import logging
 from services.analysis_service import AnalysisService
+from services.analysis_result_service import AnalysisResultService
 
 logger = logging.getLogger(__name__)
 
@@ -7,8 +8,8 @@ logger = logging.getLogger(__name__)
 def initialize_services():
     """서비스 초기화"""
     # 서버 시작 시 기존 결과 로드
-    analysis_service = AnalysisService()
-    analysis_results = analysis_service.load_all_analysis_results()
+    analysis_result_service = AnalysisResultService()
+    analysis_results = analysis_result_service.load_all_analysis_results()
     
     # 분석 결과를 라우터에서 사용할 수 있도록 설정
     from routers import analysis
