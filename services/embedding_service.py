@@ -585,3 +585,25 @@ class EmbeddingService:
         except Exception as e:
             logger.error(f"Failed to get collection stats: {e}")
             return {"error": str(e)}
+
+    def create_embedding(self, text: str) -> List[float]:
+        """
+        Generates an embedding for a single text string.
+        """
+        try:
+            embedding = self.embeddings.embed_query(text)
+            return embedding
+        except Exception as e:
+            logger.error(f"Failed to create embedding for text: {e}")
+            raise
+
+    def create_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """
+        Generates embeddings for a list of text strings.
+        """
+        try:
+            embeddings = self.embeddings.embed_documents(texts)
+            return embeddings
+        except Exception as e:
+            logger.error(f"Failed to create embeddings for texts: {e}")
+            raise
