@@ -183,3 +183,35 @@ async def embed_rdb_schema():
     except Exception as e:
         logger.error(f"Failed to embed RDB schema: {e}")
         raise HTTPException(status_code=500, detail=f"RDB 스키마 임베딩 중 오류가 발생했습니다: {str(e)}")
+
+@router.post("/embeddings", response_model=EmbeddingResponse, summary="텍스트 임베딩 생성 (OpenAI 호환)")
+async def create_text_embeddings(request: EmbeddingRequest):
+    """
+    OpenAI 호환 형식으로 텍스트 임베딩을 생성합니다.
+    """
+    try:
+        if isinstance(request.input, str):
+            texts = [request.input]
+        else:
+            texts = request.input
+
+        embedding_service = EmbeddingService()
+        
+        # Use the new create_embeddings method
+        embeddings_vectors = embedding_service.create_embeddings(texts)
+        
+        embedding_data = []
+        total_tokens = 0
+
+        for i, embedding_vector in enumerate(embeddings_vectors):
+            embedding_data.append(EmbeddingData(embedding=embedding_vector, index=i))
+            total_tokens += len(texts[i].split()) # Simple token estimation
+
+        return EmbeddingResponse(
+            data=embedding_data,
+            model=request.model,
+            usage=EmbeddingUsage(prompt_tokens=total_tokens, total_tokens=total_tokens)
+        )
+    except Exception as e:
+        logger.error(f"Failed to create text embeddings: {e}")
+        raise HTTPException(status_code=500, detail=f"텍스트 임베딩 생성 중 오류가 발생했습니다: {str(e)}")
