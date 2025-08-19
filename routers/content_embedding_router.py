@@ -83,24 +83,3 @@ async def embed_content_endpoint(request: EmbedContentRequest = Body(...)):
     except Exception as e:
         logger.error(f"Internal server error during embed-content: {e}")
         raise HTTPException(status_code=500, detail=f"콘텐츠 임베딩 중 오류가 발생했습니다: {str(e)}")
-
-
-curl -X POST "http://localhost:8001/api/v1/search" \
-     -H "Content-Type: application/json" \
-     -d '{
-           "query": "프로젝트 문서의 주요 기능은 무엇인가요?",
-           "k": 3,
-           "group_name": "my_project_docs"
-        }'
-
-
-
-curl -X POST "http://localhost:8001/api/v1/embed-content" \
-     -H "Content-Type: application/json" \
-     -d '{
-             "source_type": "file",
-             "source_data": "/Users/a08418/Documents/CoE/CoE-RagPipeline/output/documents/8535e4c4-493f-4b3e-9243-dab923e1ca74/DocumentType.ARCHITECTURE_OVERVIEW_korean.md",
-             "group_name": "my_project_docs",
-             "title": "CoE Project README",
-             "metadata": {"author": "Gemini", "version": "1.0"}
-         }'
