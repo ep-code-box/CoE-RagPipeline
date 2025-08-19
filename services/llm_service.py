@@ -292,7 +292,7 @@ class LLMDocumentService:
                             {"role": "user", "content": chunk.content}
                         ],
                         temperature=0.7,
-                        max_tokens=4000
+                        max_tokens=max_tokens_per_chunk
                     )
                     
                     chunk_content = response.choices[0].message.content
@@ -456,6 +456,8 @@ class LLMDocumentService:
                 tech_info=tech_info,
                 ast_info=ast_info,
                 metrics_info=metrics_info,
+                source_summary_info="",  # Added to prevent KeyError
+                key_summaries="",         # Added to prevent KeyError
                 detailed_analysis_json=detailed_analysis_json
             )
     
@@ -510,6 +512,10 @@ class LLMDocumentService:
         if not prompt_section:
             logger.warning("Could not find 'enhanced_user_prompts' in config, falling back to 'user_prompts'.")
             prompt_section = prompts.get("user_prompts", {})
+
+        # 변수 초기화
+        source_summary_info = ""
+        key_summaries = ""
 
         # 분석 데이터가 너무 클 경우 잘라내기
         truncated_data = truncate_analysis_data(analysis_data, max_tokens=settings.MAX_ANALYSIS_DATA_TOKENS)
