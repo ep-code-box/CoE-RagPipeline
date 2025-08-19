@@ -120,11 +120,31 @@ curl -X POST http://localhost:8001/api/v1/embed_rdb_schema
 ```bash
 curl -X POST "http://localhost:8001/api/v1/search" \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "사용자 정보 테이블",
-    "k": 5,
-    "group_name": "UserService"
-  }'
+  -d '{ "query": "사용자 정보 테이블", "k": 5, "group_name": "UserService" }'
+```
+
+### 6. 콘텐츠 임베딩 (Content Embedding)
+파일, URL 또는 직접 제공된 텍스트 콘텐츠를 임베딩하여 벡터 데이터베이스에 저장합니다. `group_name`을 지정하여 임베딩된 콘텐츠를 그룹화할 수 있습니다.
+
+**1. 파일 임베딩:**
+```bash
+curl -X POST "http://localhost:8001/api/v1/embed-content" \
+  -H "Content-Type: application/json" \
+  -d '{ "source_type": "file", "source_data": "/path/to/your/document.txt", "group_name": "my_project_docs", "title": "My Project Document", "metadata": {"author": "Gemini", "version": "1.0"} }'
+```
+
+**2. URL 임베딩:**
+```bash
+curl -X POST "http://localhost:8001/api/v1/embed-content" \
+  -H "Content-Type: application/json" \
+  -d '{ "source_type": "url", "source_data": "https://www.example.com/some-article", "group_name": "web_articles", "title": "Interesting Article", "metadata": {"category": "AI", "published_date": "2023-01-01"} }'
+```
+
+**3. 텍스트 임베딩:**
+```bash
+curl -X POST "http://localhost:8001/api/v1/embed-content" \
+  -H "Content-Type: application/json" \
+  -d '{ "source_type": "text", "source_data": "This is a sample text content that I want to embed into the vector database.", "group_name": "misc_notes", "title": "Sample Text Note" }'
 ```
 
 ## 📂 프로젝트 구조 상세 설명

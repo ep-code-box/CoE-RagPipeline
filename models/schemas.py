@@ -139,7 +139,7 @@ class DocumentGenerationResponse(BaseModel):
     message: str = Field(..., description="상태 메시지")
     analysis_id: str = Field(..., description="분석 ID")
     document_types: List[str] = Field(..., description="요청된 문서 타입 목록")
-    language: str = Field(..., description="문서 언어")
+    language: str = Field(default="korean", description="문서 언어")
     created_at: Optional[datetime] = Field(None, description="작업 생성 시간")
     completed_at: Optional[datetime] = Field(None, description="작업 완료 시간")
     error_message: Optional[str] = Field(None, description="오류 메시지")
@@ -157,6 +157,15 @@ class SearchRequest(BaseModel):
 
 class SQLQueryRequest(BaseModel):
     query: str = Field(..., description="SQL Agent에 전달할 자연어 쿼리")
+
+
+# New schema for embedding arbitrary content
+class EmbedContentRequest(BaseModel):
+    source_type: str = Field(..., description="소스 타입 (예: 'file', 'url', 'text')")
+    source_data: str = Field(..., description="소스 데이터 (파일 경로, URL, 또는 직접 텍스트)")
+    group_name: Optional[str] = Field(None, description="임베딩을 그룹화할 이름")
+    title: Optional[str] = Field(None, description="문서의 제목 (선택 사항)")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="추가 메타데이터")
 
 
 # Update forward references
