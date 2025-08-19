@@ -8,7 +8,10 @@ import git
 from git import Repo, GitCommandError
 import logging
 
-from models.schemas import GitRepository, FileInfo
+from datetime import datetime
+import json
+import uuid
+from models.schemas import GitRepository, FileInfo, RepositoryAnalysis, CodeMetrics, AnalysisResult
 
 logger = logging.getLogger(__name__)
 
@@ -512,3 +515,72 @@ class GitAnalyzer:
         
         logger.info(f"Calculated code metrics: {total_lines} lines across {code_files} code files")
         return metrics
+
+    async def perform_repository_analysis(self, analysis_id: str, request, analysis_results: dict):
+        """Git 분석 수행"""
+        try:
+            logger.info(f"Performing Git analysis for {analysis_id}")
+
+            if not hasattr(request, 'repositories') or not request.repositories:
+                logger.error("No repositories provided for analysis")
+                raise ValueError("No repositories provided for analysis")
+
+            # Git 분석 로직 구현
+            for repo_info in request.repositories:
+                try:
+                    # GitRepository 객체의 속성에 접근
+                    git_url = str(repo_info.url)  # HttpUrl을 문자열로 변환
+                    branch = repo_info.branch or "main"  # branch가 없으면 기본값 "main" 사용
+                    repo_name = repo_info.name  # name이 없어도 괜찮음
+
+                    if not git_url:  # URL이 비어있으면 건너뛰기
+                        logger.warning(f"Empty repository URL found, skipping")
+                        continue
+
+                    logger.info(f"Cloning Git repository: {git_url} (branch: {branch})")
+
+                    # 실제 Git 클론 수행
+                    git_repo = GitRepository(url=git_url, branch=branch, name=repo_name)
+                    clone_path = self.clone_repository(git_repo)
+
+                    # 클론된 레포지토리에서 commit 정보 가져오기
+                    commit_info = self.get_commit_info_from_cloned_repo(clone_path)
+
+                    # 파일 분석 수행
+                    files = self.analyze_repository_structure(clone_path)
+
+                    # 코드 메트릭 계산
+                    code_metrics = self.calculate_code_metrics(files)
+
+                    # 설정 파일 및 문서 파일 찾기
+                    config_files = self.find_config_files(clone_path)
+                    documentation_files = self.find_documentation_files(clone_path)
+
+                    # 레포지토리 분석 결과 생성
+                    repo_analysis = RepositoryAnalysis(
+                        repository=git_repo,
+                        clone_path=clone_path,
+                        files=files,
+                        code_metrics=code_metrics,
+                        config_files=config_files,
+                        documentation_files=documentation_files,
+                        commit_info=commit_info,
+                        tech_specs=[],  # 기술스펙 분석에서 채워짐
+                        ast_analysis={}
+                    )
+
+                    if analysis_id in analysis_results:
+                        analysis_results[analysis_id].repositories.append(repo_analysis)
+                        logger.info(f"Added analysis results for repository: {git_url} ({len(files)} files, {code_metrics.lines_of_code} lines)")
+
+                except Exception as e:
+                    logger.error(f"Error processing repository {git_url}: {str(e)}")
+                    continue
+
+            # Git 분석 완료 후 git_analyzer 인스턴스를 반환하여 나중에 cleanup할 수 있도록 함
+            return self
+
+        except Exception as e:
+            logger.error(f"Git analysis failed for {analysis_id}: {e}")
+            # 에러 발생 시에도 git_analyzer를 반환하여 cleanup이 가능하도록 함
+            return self
