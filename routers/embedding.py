@@ -3,7 +3,13 @@ from typing import List, Optional, Dict, Any
 import os
 import logging
 
-from models.schemas import SearchRequest # SearchRequest 모델 임포트
+from models.schemas import (
+    SearchRequest, 
+    EmbeddingRequest, 
+    EmbeddingResponse, 
+    EmbeddingData, 
+    EmbeddingUsage
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +42,9 @@ router = APIRouter(
     ### 📝 사용 예시
     ```bash
     # 일반 검색
-    curl -X POST "http://localhost:8001/api/v1/search" \\
-      -H "Content-Type: application/json" \\
-      -d '{
+    curl -X POST "http://localhost:8001/api/v1/search" \
+      -H "Content-Type: application/json" \
+      -d '{ 
         "query": "Python 함수 정의",
         "k": 5,
         "filter_metadata": {
@@ -47,18 +53,18 @@ router = APIRouter(
       }'
     
     # 특정 분석 결과에서만 검색
-    curl -X POST "http://localhost:8001/api/v1/search" \\
-      -H "Content-Type: application/json" \\
-      -d '{
+    curl -X POST "http://localhost:8001/api/v1/search" \
+      -H "Content-Type: application/json" \
+      -d '{ 
         "query": "Python 함수 정의",
         "k": 5,
         "analysis_id": "3cbf3db0-fd9e-410c-bdaa-30cdeb9d7d6c"
       }'
     
     # 특정 레포지토리의 최신 commit 분석 결과에서 검색 (NEW!)
-    curl -X POST "http://localhost:8001/api/v1/search" \\
-      -H "Content-Type: application/json" \\
-      -d '{
+    curl -X POST "http://localhost:8001/api/v1/search" \
+      -H "Content-Type: application/json" \
+      -d '{ 
         "query": "Python 함수 정의",
         "k": 5,
         "repository_url": "https://github.com/octocat/Hello-World.git"
@@ -67,7 +73,7 @@ router = APIRouter(
     # 특정 그룹명으로 검색 (NEW!)
     curl -X POST "http://localhost:8001/api/v1/search" \
       -H "Content-Type: application/json" \
-      -d '{
+      -d '{ 
         "query": "결제 모듈",
         "k": 5,
         "group_name": "PaymentServiceTeam"
@@ -190,6 +196,7 @@ async def create_text_embeddings(request: EmbeddingRequest):
     OpenAI 호환 형식으로 텍스트 임베딩을 생성합니다.
     """
     try:
+        from services.embedding_service import EmbeddingService
         if isinstance(request.input, str):
             texts = [request.input]
         else:
@@ -215,3 +222,17 @@ async def create_text_embeddings(request: EmbeddingRequest):
     except Exception as e:
         logger.error(f"Failed to create text embeddings: {e}")
         raise HTTPException(status_code=500, detail=f"텍스트 임베딩 생성 중 오류가 발생했습니다: {str(e)}")
+
+@router.get("/groups", response_model=List[str], summary="등록된 모든 그룹 이름 조회")
+async def get_all_group_names():
+    """
+    ChromaDB에 저장된 모든 문서에서 유니크한 `group_name` 목록을 조회합니다.
+    """
+    try:
+        from services.embedding_service import EmbeddingService
+        embedding_service = EmbeddingService()
+        group_names = embedding_service.get_all_group_names()
+        return group_names
+    except Exception as e:
+        logger.error(f"Failed to get all group names: {e}")
+        raise HTTPException(status_code=500, detail=f"그룹 이름 조회 중 오류가 발생했습니다: {str(e)}")
