@@ -1,5 +1,5 @@
 from pydantic import BaseModel, HttpUrl, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from enum import Enum
 
@@ -166,6 +166,27 @@ class EmbedContentRequest(BaseModel):
     group_name: Optional[str] = Field(None, description="임베딩을 그룹화할 이름")
     title: Optional[str] = Field(None, description="문서의 제목 (선택 사항)")
     metadata: Optional[Dict[str, Any]] = Field(None, description="추가 메타데이터")
+
+# --- OpenAI-compatible Embedding Schemas ---
+
+class EmbeddingRequest(BaseModel):
+    input: Union[str, List[str]] = Field(..., description="The input text or texts to embed.")
+    model: str = Field(..., description="The ID of the model to use for embedding.")
+
+class EmbeddingData(BaseModel):
+    object: str = "embedding"
+    embedding: List[float] = Field(..., description="The embedding vector.")
+    index: int = Field(..., description="The index of the embedding in the list.")
+
+class EmbeddingUsage(BaseModel):
+    prompt_tokens: int = Field(..., description="The number of tokens in the prompt.")
+    total_tokens: int = Field(..., description="The total number of tokens used.")
+
+class EmbeddingResponse(BaseModel):
+    object: str = "list"
+    data: List[EmbeddingData] = Field(..., description="The list of embeddings.")
+    model: str = Field(..., description="The ID of the model that was used.")
+    usage: EmbeddingUsage = Field(..., description="The usage statistics for the embedding request.")
 
 
 # Update forward references

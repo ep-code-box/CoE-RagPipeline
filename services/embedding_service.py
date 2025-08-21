@@ -586,6 +586,24 @@ class EmbeddingService:
             logger.error(f"Failed to get collection stats: {e}")
             return {"error": str(e)}
 
+    def get_all_group_names(self) -> List[str]:
+        """DB에 저장된 모든 유니크한 group_name을 반환합니다."""
+        try:
+            collection = self.vectorstore._collection
+            # include=['metadatas'] 를 사용하여 메타데이터만 가져옵니다.
+            results = collection.get(include=["metadatas"])
+            
+            group_names = set()
+            for metadata in results.get('metadatas', []):
+                if metadata and 'group_name' in metadata:
+                    group_names.add(metadata['group_name'])
+            
+            logger.info(f"Found {len(group_names)} unique group names.")
+            return sorted(list(group_names))
+        except Exception as e:
+            logger.error(f"Failed to get all group names: {e}")
+            return []
+
     def create_embedding(self, text: str) -> List[float]:
         """
         Generates an embedding for a single text string.
