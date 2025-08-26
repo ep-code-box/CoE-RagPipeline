@@ -9,26 +9,9 @@ from config.settings import settings
 from utils.server_utils import find_available_port
 from utils.app_initializer import initialize_services
 from core.database import init_database
+from core.logging_config import LOGGING_CONFIG
 
-# 로깅 설정 - uvicorn과 중복 방지
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    force=True  # 기존 설정 덮어쓰기
-)
 logger = logging.getLogger(__name__)
-
-# uvicorn 로거 설정 조정 (중복 로그 방지)
-uvicorn_logger = logging.getLogger("uvicorn.access")
-uvicorn_logger.disabled = False  # uvicorn 로그는 유지
-
-# 루트 로거의 핸들러 중복 방지
-root_logger = logging.getLogger()
-if len(root_logger.handlers) > 1:
-    # 중복된 핸들러 제거 (첫 번째만 유지)
-    for handler in root_logger.handlers[1:]:
-        root_logger.removeHandler(handler)
-
 
 def create_app() -> FastAPI:
     """FastAPI 애플리케이션 생성 및 설정"""
@@ -105,11 +88,11 @@ def create_app() -> FastAPI:
 app = create_app()
 
 # 데이터베이스 초기화
-print("🔄 Initializing database...")
+logger.info("🔄 Initializing database...")
 if init_database():
-    print("✅ Database initialized successfully")
+    logger.info("✅ Database initialized successfully")
 else:
-    print("❌ Database initialization failed")
+    logger.error("❌ Database initialization failed")
 
 # 서비스 초기화
 initialize_services()
@@ -127,8 +110,8 @@ if __name__ == "__main__":
             port=available_port,
             reload=settings.RELOAD,
             reload_dirs=["analyzers", "config","routers", "services", "models", "core", "utils"],  # 감시할 디렉토리 지정
-            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv", ".git", "output","gitsync"],  # 감시를 제외할 파일 지정],  # 제외할 패턴 지정
-            log_level=settings.LOG_LEVEL
+            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv", ".git", "output","gitsync"],  # 감시를 제외할 파일 지정
+            log_config=LOGGING_CONFIG
         )
     except RuntimeError as e:
         logger.error(f"Failed to start server: {e}")
