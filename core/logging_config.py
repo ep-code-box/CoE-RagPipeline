@@ -1,4 +1,5 @@
 import logging
+import logging.handlers
 
 # Uvicorn's default format for access logs, with slight modification for clarity
 # See: https://github.com/encode/uvicorn/blob/master/uvicorn/logging.py
@@ -30,10 +31,24 @@ LOGGING_CONFIG = {
             "class": "logging.StreamHandler",
             "stream": "ext://sys.stdout",
         },
+        "file_app": {
+            "formatter": "default",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": "/app/logs/app.log",
+            "maxBytes": 10485760,  # 10 MB
+            "backupCount": 5,
+        },
+        "file_access": {
+            "formatter": "access",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": "/app/logs/access.log",
+            "maxBytes": 10485760,  # 10 MB
+            "backupCount": 5,
+        },
     },
     "loggers": {
         "": { # Root logger
-            "handlers": ["default"],
+            "handlers": ["default", "file_app"],
             "level": "INFO",
             "propagate": False
         },
@@ -43,7 +58,7 @@ LOGGING_CONFIG = {
             "propagate": False
         },
         "uvicorn.access": {
-            "handlers": ["access"],
+            "handlers": ["access", "file_access"],
             "level": "INFO",
             "propagate": False,
         },
