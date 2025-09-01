@@ -25,4 +25,4 @@ EXPOSE 8001
 # 7. 애플리케이션 실행
 # uvicorn을 사용하여 FastAPI 애플리케이션을 실행합니다.
 # main.py 파일 안에 FastAPI 인스턴스가 'app'으로 정의되어 있다고 가정합니다.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--log-config", "core/logging_config.py"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
