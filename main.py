@@ -1,119 +1,54 @@
+"""
+CoE RAG Pipeline API Server
+Git 분석 및 RAG 시스템을 위한 FastAPI 백엔드 서버
+"""
+
 import logging
-import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+import logging.handlers
+import os
+from pathlib import Path
 
-from routers import health, analysis, embedding, document_generation, source_summary, content_embedding_router
-from routers.enhanced import enhanced_analysis
-from config.settings import settings
-from utils.server_utils import find_available_port
-from utils.app_initializer import initialize_services
-from core.database import init_database
-from core.logging_config import LOGGING_CONFIG
-
-logger = logging.getLogger(__name__)
-
-def create_app() -> FastAPI:
-    """FastAPI 애플리케이션 생성 및 설정"""
-    app = FastAPI(
-        title="🔍 CoE RAG Pipeline",
-        description="""
-        ## CoE RAG Pipeline - Git 분석 및 RAG 시스템
-        
-        Git 레포지토리들을 **심층 분석**하여 개발 가이드를 자동 생성하는 RAG 파이프라인입니다.
-        
-        ### 🚀 주요 기능
-        - **Git 레포지토리 분석**: 소스코드 자동 클론 및 분석 (`/api/v1/analyze`)
-        - **AST 분석**: Python, JavaScript, Java, TypeScript 등 주요 언어 지원
-        - **기술스펙 분석**: 의존성, 프레임워크, 라이브러리 자동 감지
-        - **레포지토리간 연관도**: 공통 의존성, 코드 패턴, 아키텍처 유사성 분석
-        - **벡터 검색**: ChromaDB 기반 고성능 검색 (`/api/v1/search`)
-        - **문서 자동 수집**: README, doc 폴더, 참조 URL 자동 수집
-        - **LLM 문서 생성**: 분석 결과 기반 개발 가이드, API 문서 등 자동 생성 (`/api/v1/documents/generate`)
-        
-        ### 📊 분석 결과
-        - **개발 표준 문서**: 코딩 스타일, 아키텍처 패턴 가이드
-        - **공통 함수 가이드**: 재사용 가능한 함수 및 컴포넌트 추천
-        - **JSON 결과**: 구조화된 분석 결과 저장 (`/api/v1/results`)
-        
-        ### 🔧 사용 방법
-        1. **분석 시작**: `/api/v1/analyze`로 Git URL 제출
-        2. **결과 확인**: `/api/v1/results/{analysis_id}`로 분석 결과 조회
-        3. **문서 생성**: `/api/v1/documents/generate`로 LLM 기반 문서 생성
-        4. **벡터 검색**: `/api/v1/search`로 코드/문서 검색
-        5. **통계 확인**: `/api/v1/stats`로 임베딩 통계 확인
-        
-        ### 🔗 연동 서비스
-        - **CoE-Backend**: `http://localhost:8000` (AI 에이전트 서버)
-        - **ChromaDB**: 벡터 데이터베이스 (포트 6666)
-        """,
-        version="1.0.0",
-        docs_url="/docs",
-        redoc_url="/redoc", 
-        openapi_url="/openapi.json",
-        swagger_ui_parameters={
-            "defaultModelsExpandDepth": 2,
-            "defaultModelExpandDepth": 2,
-            "displayRequestDuration": True,
-            "docExpansion": "list",
-            "filter": True,
-            "showExtensions": True,
-            "showCommonExtensions": True,
-            "tryItOutEnabled": True
-        }
+# 로깅 설정을 먼저 구성
+def setup_logging():
+    """로깅 설정을 구성합니다."""
+    log_dir = "/app/logs" if os.path.exists("/app/logs") else "./logs"
+    Path(log_dir).mkdir(parents=True, exist_ok=True)
+    
+    # 루트 로거 설정
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # 파일 핸들러 추가
+    file_handler = logging.handlers.RotatingFileHandler(
+        f"{log_dir}/app.log",
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
     )
-
-    # CORS 미들웨어 추가
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+    file_handler.setLevel(logging.INFO)
+    
+    # 포맷터 설정
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
+    file_handler.setFormatter(formatter)
+    
+    # 핸들러 추가
+    root_logger.addHandler(file_handler)
+    
+    # 시작 로그 기록
+    logging.info("=== CoE RAG Pipeline Starting ===")
+    logging.info(f"Log directory: {log_dir}")
 
-    # 라우터 등록
-    app.include_router(health.router)
-    app.include_router(analysis.router)
-    app.include_router(embedding.router)
-    app.include_router(document_generation.router)
-    app.include_router(source_summary.router)
-    app.include_router(enhanced_analysis.router)
-    app.include_router(content_embedding_router.router)
+# 로깅 설정
+setup_logging()
 
-    return app
+from core.app_factory import create_app
 
-
-# FastAPI 앱 생성
+# 애플리케이션 생성 (모든 초기화 포함)
 app = create_app()
 
-# 데이터베이스 초기화
-logger.info("🔄 Initializing database...")
-if init_database():
-    logger.info("✅ Database initialized successfully")
-else:
-    logger.error("❌ Database initialization failed")
-
-# 서비스 초기화
-initialize_services()
-
-
 if __name__ == "__main__":
-    try:
-        # 사용 가능한 포트 찾기
-        available_port = find_available_port(start_port=settings.PORT)
-        logger.info(f"Starting server on port {available_port}")
-        
-        uvicorn.run(
-            "main:app",
-            host=settings.HOST,
-            port=available_port,
-            reload=settings.RELOAD,
-            reload_dirs=["analyzers", "config","routers", "services", "models", "core", "utils"],  # 감시할 디렉토리 지정
-            reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv", ".git", "output","gitsync"],  # 감시를 제외할 파일 지정
-            log_config=LOGGING_CONFIG
-        )
-    except RuntimeError as e:
-        logger.error(f"Failed to start server: {e}")
-        logger.info("Please check if other processes are using ports in the range 8001-8010")
-        exit(1)
+    from core.server import run_server
+    run_server()
