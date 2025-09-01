@@ -21,7 +21,10 @@ COPY requirements.txt .
 RUN uv pip install --system --no-cache -r requirements.txt
 
 # 5. 로그 디렉토리 생성 및 권한 설정
-RUN mkdir -p /app/logs && chmod 755 /app/logs
+RUN mkdir -p /app/logs && \
+    chmod 777 /app/logs && \
+    touch /app/logs/app.log /app/logs/access.log /app/logs/error.log && \
+    chmod 666 /app/logs/*.log
 
 # 6. 소스 코드 복사
 # 나머지 프로젝트 파일을 이미지에 복사합니다.
