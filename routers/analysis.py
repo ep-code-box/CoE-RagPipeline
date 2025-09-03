@@ -47,7 +47,8 @@ analysis_results = {}
     ```bash
     curl -X POST "http://localhost:8001/api/v1/analyze" \
       -H "Content-Type: application/json" \
-      -d '{
+      -d 
+      '{ 
         "repositories": [
           {
             "url": "https://github.com/octocat/Hello-World.git",
@@ -271,12 +272,12 @@ async def get_analysis_result(analysis_id: str, db: Session = Depends(get_db)):
 async def list_analysis_results(db: Session = Depends(get_db)):
     """모든 분석 결과 목록 조회"""
     try:
-        from services.analysis_service import AnalysisService
+        from services.analysis_result_service import AnalysisResultService
         
-        analysis_service = AnalysisService()
+        analysis_result_service = AnalysisResultService()
         
         # 데이터베이스에서 모든 분석 결과 조회
-        db_results = analysis_service.get_all_analysis_results_from_db(db)
+        db_results = analysis_result_service.get_all_analysis_results_from_db(db)
         
         # 메모리 캐시의 결과와 병합
         all_results = {}

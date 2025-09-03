@@ -48,6 +48,7 @@ class Settings:
     MAX_ANALYSIS_DATA_TOKENS: int = int(os.getenv("MAX_ANALYSIS_DATA_TOKENS", "8000"))
     TOKEN_SAFETY_MARGIN: int = int(os.getenv("TOKEN_SAFETY_MARGIN", "2000"))
     ENABLE_AUTO_CHUNKING: bool = os.getenv("ENABLE_AUTO_CHUNKING", "true").lower() == "true"
+    LLM_TIMEOUT_SECONDS: int = int(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
     
     def __init__(self):
         # 필요한 디렉토리 생성
