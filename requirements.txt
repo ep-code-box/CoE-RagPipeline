@@ -54,3 +54,4 @@ pytest-mock
 pytest-cov
 httpx
 fakeredis
+gunicorn

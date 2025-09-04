@@ -60,6 +60,14 @@
     docker-compose logs -f coe-ragpipeline
     ```
 
+## 5. 운영 시 DB 마이그레이션
+
+- 기본값: 스킵. 컨테이너 시작 시 Alembic을 자동 실행하지 않도록 설정되어 있습니다.
+- 배포 시 1회 적용 방법:
+  - Compose 환경변수: `RUN_MIGRATIONS=true docker compose up -d coe-ragpipeline`
+  - 이미 기동된 경우: `docker compose exec coe-ragpipeline alembic upgrade head`
+- 상세한 운영 가이드: 최상위 `docs/OPERATIONS.md`
+
 ## 4. API 사용 예시
 
 ### 4.1. Git 저장소 분석

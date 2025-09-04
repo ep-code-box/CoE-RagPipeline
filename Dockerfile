@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y git build-essential curl && rm -rf /var
 
 # uv를 설치합니다.
 RUN pip install uv
+RUN pip install alembic
 
 # requirements.txt 파일을 복사합니다.
 COPY requirements.txt .
@@ -40,4 +41,4 @@ EXPOSE 8001
 # 9. 애플리케이션 실행
 # uvicorn을 사용하여 FastAPI 애플리케이션을 실행합니다.
 # main.py 파일 안에 FastAPI 인스턴스가 'app'으로 정의되어 있다고 가정합니다.
-CMD ["sh", "-c", "/app/scripts/setup_logs.sh && uvicorn main:app --host 0.0.0.0 --port 8001"]
+CMD ["sh", "-c", "/app/scripts/setup_logs.sh && if [ \"${RUN_MIGRATIONS:-true}\" = \"true\" ]; then echo 'Running Alembic migrations...'; alembic upgrade head; else echo 'Skipping Alembic migrations (RUN_MIGRATIONS=false)'; fi && gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001"]
