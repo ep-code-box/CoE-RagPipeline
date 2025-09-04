@@ -52,12 +52,12 @@
 3.  **Docker Compose 실행**:
     프로젝트 최상위 디렉토리에서 아래 명령어를 실행합니다.
     ```bash
-    docker-compose up --build -d
+    docker compose up --build -d
     ```
 
 4.  **로그 확인**:
     ```bash
-    docker-compose logs -f coe-ragpipeline
+    docker compose logs -f coe-ragpipeline
     ```
 
 ## 5. 운영 시 DB 마이그레이션

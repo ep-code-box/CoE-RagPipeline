@@ -87,185 +87,282 @@ def upgrade() -> None:
     if op.f('ix_analysis_requests_id') not in idx_names:
         op.create_index(op.f('ix_analysis_requests_id'), 'analysis_requests', ['id'], unique=False)
     op.create_foreign_key('repository_analyses_ibfk_1', 'repository_analyses', 'analysis_requests', ['analysis_id'], ['analysis_id'])
-    # development_standards 테이블이 이미 존재하면 생성 스킵
-    if not sa.inspect(conn).has_table('development_standards'):
+    # development_standards 테이블 인덱스는 존재할 때만, 중복 없을 때만 생성
+    if sa.inspect(conn).has_table('development_standards'):
+        dev_idx_names = {idx['name'] for idx in sa.inspect(conn).get_indexes('development_standards')}
+        if op.f('ix_development_standards_id') not in dev_idx_names:
+            op.create_index(op.f('ix_development_standards_id'), 'development_standards', ['id'], unique=False)
+    # code_files
+    if not sa.inspect(conn).has_table('code_files'):
+        op.create_table('code_files',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
+        sa.Column('file_path', sa.String(length=1000), nullable=False),
+        sa.Column('file_name', sa.String(length=255), nullable=False),
+        sa.Column('file_size', sa.Integer(), nullable=True),
+        sa.Column('language', sa.String(length=50), nullable=True),
+        sa.Column('complexity_score', sa.DECIMAL(precision=5, scale=2), nullable=True),
+        sa.Column('last_modified', sa.DateTime(), nullable=True),
+        sa.Column('file_hash', sa.String(length=64), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
+        sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index(op.f('ix_code_files_id'), 'code_files', ['id'], unique=False)
+    else:
+        existing = {idx['name'] for idx in sa.inspect(conn).get_indexes('code_files')}
+        if op.f('ix_code_files_id') not in existing:
+            op.create_index(op.f('ix_code_files_id'), 'code_files', ['id'], unique=False)
+
+    # correlation_analyses (FKs are best-effort; fallback to no-FK if incompatible)
+    if not sa.inspect(conn).has_table('correlation_analyses'):
         try:
-            # op.create_table('development_standards',
-            # sa.Column('id', sa.Integer(), nullable=False),
-            # sa.Column('analysis_id', sa.String(length=36, collation='utf8mb4_unicode_ci'), nullable=False),
-            # sa.Column('standard_type', sa.Enum('CODING_STYLE', 'ARCHITECTURE_PATTERN', 'COMMON_FUNCTIONS', 'BEST_PRACTICES', name='standardtype'), nullable=False),
-            # sa.Column('title', sa.String(length=500), nullable=False),
-            # sa.Column('content', sa.Text(), nullable=False),
-            # sa.Column('examples', sa.JSON(), nullable=True),
-            # sa.Column('recommendations', sa.JSON(), nullable=True),
-            # sa.Column('created_at', sa.DateTime(), nullable=True),
-            # sa.Column('updated_at', sa.DateTime(), nullable=True),
-            # sa.ForeignKeyConstraint(['analysis_id'], ['analysis_requests.analysis_id'], ),
-            # sa.PrimaryKeyConstraint('id'),
-            # mysql_collate='utf8mb4_unicode_ci',
-            # mysql_default_charset='utf8mb4',
-            # mysql_engine='InnoDB'
-            # )
+            op.create_table('correlation_analyses',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('analysis_id', sa.String(length=36), nullable=False),
+            sa.Column('repository1_id', sa.Integer(), nullable=False),
+            sa.Column('repository2_id', sa.Integer(), nullable=False),
+            sa.Column('common_dependencies', sa.JSON(), nullable=True),
+            sa.Column('similar_patterns', sa.JSON(), nullable=True),
+            sa.Column('architecture_similarity', sa.DECIMAL(precision=5, scale=4), nullable=True),
+            sa.Column('shared_technologies', sa.JSON(), nullable=True),
+            sa.Column('similarity_score', sa.DECIMAL(precision=5, scale=4), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.ForeignKeyConstraint(['analysis_id'], ['analysis_requests.analysis_id'], ),
+            sa.ForeignKeyConstraint(['repository1_id'], ['repository_analyses.id'], ),
+            sa.ForeignKeyConstraint(['repository2_id'], ['repository_analyses.id'], ),
+            sa.PrimaryKeyConstraint('id')
+            )
         except Exception:
-            # FK 제약조건 생성 실패 시, FK 없이 테이블을 생성 (운영 안정성 우선)
-            # op.create_table('development_standards',
-            # sa.Column('id', sa.Integer(), nullable=False),
-            # sa.Column('analysis_id', sa.String(length=36, collation='utf8mb4_unicode_ci'), nullable=False),
-            # sa.Column('standard_type', sa.Enum('CODING_STYLE', 'ARCHITECTURE_PATTERN', 'COMMON_FUNCTIONS', 'BEST_PRACTICES', name='standardtype'), nullable=False),
-            # sa.Column('title', sa.String(length=500), nullable=False),
-            # sa.Column('content', sa.Text(), nullable=False),
-            # sa.Column('examples', sa.JSON(), nullable=True),
-            # sa.Column('recommendations', sa.JSON(), nullable=True),
-            # sa.Column('created_at', sa.DateTime(), nullable=True),
-            # sa.Column('updated_at', sa.DateTime(), nullable=True),
-            # sa.PrimaryKeyConstraint('id'),
-            # mysql_collate='utf8mb4_unicode_ci',
-            # mysql_default_charset='utf8mb4',
-            # mysql_engine='InnoDB'
-            # )
-    op.create_index(op.f('ix_development_standards_id'), 'development_standards', ['id'], unique=False)
-    op.create_table('code_files',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
-    sa.Column('file_path', sa.String(length=1000), nullable=False),
-    sa.Column('file_name', sa.String(length=255), nullable=False),
-    sa.Column('file_size', sa.Integer(), nullable=True),
-    sa.Column('language', sa.String(length=50), nullable=True),
-    sa.Column('complexity_score', sa.DECIMAL(precision=5, scale=2), nullable=True),
-    sa.Column('last_modified', sa.DateTime(), nullable=True),
-    sa.Column('file_hash', sa.String(length=64), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_code_files_id'), 'code_files', ['id'], unique=False)
-    op.create_table('correlation_analyses',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('analysis_id', sa.String(length=36), nullable=False),
-    sa.Column('repository1_id', sa.Integer(), nullable=False),
-    sa.Column('repository2_id', sa.Integer(), nullable=False),
-    sa.Column('common_dependencies', sa.JSON(), nullable=True),
-    sa.Column('similar_patterns', sa.JSON(), nullable=True),
-    sa.Column('architecture_similarity', sa.DECIMAL(precision=5, scale=4), nullable=True),
-    sa.Column('shared_technologies', sa.JSON(), nullable=True),
-    sa.Column('similarity_score', sa.DECIMAL(precision=5, scale=4), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['analysis_id'], ['analysis_requests.analysis_id'], ),
-    sa.ForeignKeyConstraint(['repository1_id'], ['repository_analyses.id'], ),
-    sa.ForeignKeyConstraint(['repository2_id'], ['repository_analyses.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_correlation_analyses_id'), 'correlation_analyses', ['id'], unique=False)
-    op.create_table('document_analyses',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
-    sa.Column('document_path', sa.String(length=1000), nullable=False),
-    sa.Column('document_type', sa.Enum('README', 'API_DOC', 'WIKI', 'CHANGELOG', 'CONTRIBUTING', 'OTHER', name='documenttype'), nullable=True),
-    sa.Column('title', sa.String(length=500), nullable=True),
-    sa.Column('content', sa.Text(), nullable=True),
-    sa.Column('extracted_sections', sa.JSON(), nullable=True),
-    sa.Column('code_examples', sa.JSON(), nullable=True),
-    sa.Column('api_endpoints', sa.JSON(), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_document_analyses_id'), 'document_analyses', ['id'], unique=False)
-    op.create_table('tech_dependencies',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
-    sa.Column('dependency_type', sa.Enum('FRAMEWORK', 'LIBRARY', 'TOOL', 'LANGUAGE', name='dependencytype'), nullable=False),
-    sa.Column('name', sa.String(length=255), nullable=False),
-    sa.Column('version', sa.String(length=100), nullable=True),
-    sa.Column('package_manager', sa.String(length=50), nullable=True),
-    sa.Column('is_dev_dependency', sa.Boolean(), nullable=True),
-    sa.Column('license', sa.String(length=100), nullable=True),
-    sa.Column('vulnerability_count', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_tech_dependencies_id'), 'tech_dependencies', ['id'], unique=False)
-    op.create_table('ast_nodes',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('code_file_id', sa.Integer(), nullable=False),
-    sa.Column('node_type', sa.String(length=100), nullable=False),
-    sa.Column('node_name', sa.String(length=255), nullable=True),
-    sa.Column('line_start', sa.Integer(), nullable=True),
-    sa.Column('line_end', sa.Integer(), nullable=True),
-    sa.Column('parent_id', sa.Integer(), nullable=True),
-    sa.Column('node_metadata', sa.JSON(), nullable=True),
-    sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['code_file_id'], ['code_files.id'], ),
-    sa.ForeignKeyConstraint(['parent_id'], ['ast_nodes.id'], ),
-    sa.PrimaryKeyConstraint('id')
-    )
-    op.create_index(op.f('ix_ast_nodes_id'), 'ast_nodes', ['id'], unique=False)
-    op.drop_index('ix_langflow_tool_mappings_id', table_name='langflow_tool_mappings')
-    op.drop_index('ix_langflow_tool_mappings_tool_contexts', table_name='langflow_tool_mappings')
-    op.drop_table('langflow_tool_mappings')
-    op.drop_index('ix_chat_messages_id', table_name='chat_messages')
-    op.drop_table('chat_messages')
-    op.drop_index('ix_langflows_flow_id', table_name='langflows')
-    op.drop_index('ix_langflows_id', table_name='langflows')
-    op.drop_index('ix_langflows_name', table_name='langflows')
-    op.drop_table('langflows')
-    op.drop_index('idx_version', table_name='schema_migrations')
-    op.drop_index('version', table_name='schema_migrations')
-    op.drop_table('schema_migrations')
-    op.drop_index('ix_api_logs_id', table_name='api_logs')
-    op.drop_table('api_logs')
-    op.drop_table('conversation_summaries')
+            # Fallback without FKs (pre-existing schema mismatch)
+            op.create_table('correlation_analyses',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('analysis_id', sa.String(length=36), nullable=False),
+            sa.Column('repository1_id', sa.Integer(), nullable=False),
+            sa.Column('repository2_id', sa.Integer(), nullable=False),
+            sa.Column('common_dependencies', sa.JSON(), nullable=True),
+            sa.Column('similar_patterns', sa.JSON(), nullable=True),
+            sa.Column('architecture_similarity', sa.DECIMAL(precision=5, scale=4), nullable=True),
+            sa.Column('shared_technologies', sa.JSON(), nullable=True),
+            sa.Column('similarity_score', sa.DECIMAL(precision=5, scale=4), nullable=True),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.PrimaryKeyConstraint('id')
+            )
+        op.create_index(op.f('ix_correlation_analyses_id'), 'correlation_analyses', ['id'], unique=False)
+    else:
+        existing = {idx['name'] for idx in sa.inspect(conn).get_indexes('correlation_analyses')}
+        if op.f('ix_correlation_analyses_id') not in existing:
+            op.create_index(op.f('ix_correlation_analyses_id'), 'correlation_analyses', ['id'], unique=False)
+
+    # document_analyses
+    if not sa.inspect(conn).has_table('document_analyses'):
+        op.create_table('document_analyses',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
+        sa.Column('document_path', sa.String(length=1000), nullable=False),
+        sa.Column('document_type', sa.Enum('README', 'API_DOC', 'WIKI', 'CHANGELOG', 'CONTRIBUTING', 'OTHER', name='documenttype'), nullable=True),
+        sa.Column('title', sa.String(length=500), nullable=True),
+        sa.Column('content', sa.Text(), nullable=True),
+        sa.Column('extracted_sections', sa.JSON(), nullable=True),
+        sa.Column('code_examples', sa.JSON(), nullable=True),
+        sa.Column('api_endpoints', sa.JSON(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
+        sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index(op.f('ix_document_analyses_id'), 'document_analyses', ['id'], unique=False)
+    else:
+        existing = {idx['name'] for idx in sa.inspect(conn).get_indexes('document_analyses')}
+        if op.f('ix_document_analyses_id') not in existing:
+            op.create_index(op.f('ix_document_analyses_id'), 'document_analyses', ['id'], unique=False)
+
+    # tech_dependencies
+    if not sa.inspect(conn).has_table('tech_dependencies'):
+        op.create_table('tech_dependencies',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('repository_analysis_id', sa.Integer(), nullable=False),
+        sa.Column('dependency_type', sa.Enum('FRAMEWORK', 'LIBRARY', 'TOOL', 'LANGUAGE', name='dependencytype'), nullable=False),
+        sa.Column('name', sa.String(length=255), nullable=False),
+        sa.Column('version', sa.String(length=100), nullable=True),
+        sa.Column('package_manager', sa.String(length=50), nullable=True),
+        sa.Column('is_dev_dependency', sa.Boolean(), nullable=True),
+        sa.Column('license', sa.String(length=100), nullable=True),
+        sa.Column('vulnerability_count', sa.Integer(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(['repository_analysis_id'], ['repository_analyses.id'], ),
+        sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index(op.f('ix_tech_dependencies_id'), 'tech_dependencies', ['id'], unique=False)
+    else:
+        existing = {idx['name'] for idx in sa.inspect(conn).get_indexes('tech_dependencies')}
+        if op.f('ix_tech_dependencies_id') not in existing:
+            op.create_index(op.f('ix_tech_dependencies_id'), 'tech_dependencies', ['id'], unique=False)
+
+    # ast_nodes
+    if not sa.inspect(conn).has_table('ast_nodes'):
+        op.create_table('ast_nodes',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('code_file_id', sa.Integer(), nullable=False),
+        sa.Column('node_type', sa.String(length=100), nullable=False),
+        sa.Column('node_name', sa.String(length=255), nullable=True),
+        sa.Column('line_start', sa.Integer(), nullable=True),
+        sa.Column('line_end', sa.Integer(), nullable=True),
+        sa.Column('parent_id', sa.Integer(), nullable=True),
+        sa.Column('node_metadata', sa.JSON(), nullable=True),
+        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(['code_file_id'], ['code_files.id'], ),
+        sa.ForeignKeyConstraint(['parent_id'], ['ast_nodes.id'], ),
+        sa.PrimaryKeyConstraint('id')
+        )
+        op.create_index(op.f('ix_ast_nodes_id'), 'ast_nodes', ['id'], unique=False)
+    else:
+        existing = {idx['name'] for idx in sa.inspect(conn).get_indexes('ast_nodes')}
+        if op.f('ix_ast_nodes_id') not in existing:
+            op.create_index(op.f('ix_ast_nodes_id'), 'ast_nodes', ['id'], unique=False)
+    # Safe drops for legacy tables/indexes (drop only if exist)
+    if sa.inspect(conn).has_table('langflow_tool_mappings'):
+        ltm_idx = {i['name'] for i in sa.inspect(conn).get_indexes('langflow_tool_mappings')}
+        if 'ix_langflow_tool_mappings_id' in ltm_idx:
+            try:
+                op.drop_index('ix_langflow_tool_mappings_id', table_name='langflow_tool_mappings')
+            except Exception:
+                pass
+        if 'ix_langflow_tool_mappings_tool_contexts' in ltm_idx:
+            try:
+                op.drop_index('ix_langflow_tool_mappings_tool_contexts', table_name='langflow_tool_mappings')
+            except Exception:
+                pass
+        try:
+            op.drop_table('langflow_tool_mappings')
+        except Exception:
+            pass
+
+    if sa.inspect(conn).has_table('chat_messages'):
+        cm_idx = {i['name'] for i in sa.inspect(conn).get_indexes('chat_messages')}
+        if 'ix_chat_messages_id' in cm_idx:
+            try:
+                op.drop_index('ix_chat_messages_id', table_name='chat_messages')
+            except Exception:
+                pass
+        try:
+            op.drop_table('chat_messages')
+        except Exception:
+            pass
+
+    if sa.inspect(conn).has_table('langflows'):
+        lf_idx = {i['name'] for i in sa.inspect(conn).get_indexes('langflows')}
+        for idx in ['ix_langflows_flow_id', 'ix_langflows_id', 'ix_langflows_name']:
+            if idx in lf_idx:
+                try:
+                    op.drop_index(idx, table_name='langflows')
+                except Exception:
+                    pass
+        try:
+            op.drop_table('langflows')
+        except Exception:
+            pass
+
+    if sa.inspect(conn).has_table('schema_migrations'):
+        sm_idx = {i['name'] for i in sa.inspect(conn).get_indexes('schema_migrations')}
+        for idx in ['idx_version', 'version']:
+            if idx in sm_idx:
+                try:
+                    op.drop_index(idx, table_name='schema_migrations')
+                except Exception:
+                    pass
+        try:
+            op.drop_table('schema_migrations')
+        except Exception:
+            pass
+
+    if sa.inspect(conn).has_table('api_logs'):
+        api_idx = {i['name'] for i in sa.inspect(conn).get_indexes('api_logs')}
+        if 'ix_api_logs_id' in api_idx:
+            try:
+                op.drop_index('ix_api_logs_id', table_name='api_logs')
+            except Exception:
+                pass
+        try:
+            op.drop_table('api_logs')
+        except Exception:
+            pass
+
+    if sa.inspect(conn).has_table('conversation_summaries'):
+        try:
+            op.drop_table('conversation_summaries')
+        except Exception:
+            pass
     
-    op.alter_column('rag_analysis_results', 'status',
-               existing_type=mysql.VARCHAR(length=50),
-               type_=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='analysisstatus'),
-               nullable=True)
-    op.alter_column('rag_analysis_results', 'repositories_data',
-               existing_type=mysql.MEDIUMTEXT(),
-               type_=sa.Text(),
-               existing_nullable=True)
-    op.alter_column('rag_analysis_results', 'correlation_data',
-               existing_type=mysql.MEDIUMTEXT(),
-               type_=sa.Text(),
-               existing_nullable=True)
-    op.alter_column('rag_analysis_results', 'tech_specs_summary',
-               existing_type=mysql.MEDIUMTEXT(),
-               type_=sa.Text(),
-               existing_nullable=True)
-    # rag_analysis_results 인덱스도 방어적으로 제거
-    try:
-        conn.exec_driver_sql("DROP INDEX IF EXISTS analysis_id ON rag_analysis_results")
-    except Exception:
-        pass
-    try:
-        conn.exec_driver_sql("DROP INDEX IF EXISTS idx_analysis_id ON rag_analysis_results")
-    except Exception:
-        pass
-    try:
-        conn.exec_driver_sql("DROP INDEX IF EXISTS idx_git_url ON rag_analysis_results")
-    except Exception:
-        pass
-    rag_idx_names = {idx['name'] for idx in sa.inspect(conn).get_indexes('rag_analysis_results')}
-    if op.f('ix_rag_analysis_results_analysis_id') not in rag_idx_names:
-        op.create_index(op.f('ix_rag_analysis_results_analysis_id'), 'rag_analysis_results', ['analysis_id'], unique=True)
-    if op.f('ix_rag_analysis_results_git_url') not in rag_idx_names:
-        op.create_index(op.f('ix_rag_analysis_results_git_url'), 'rag_analysis_results', ['git_url'], unique=False)
-    if op.f('ix_rag_analysis_results_id') not in rag_idx_names:
-        op.create_index(op.f('ix_rag_analysis_results_id'), 'rag_analysis_results', ['id'], unique=False)
+    # rag_analysis_results 테이블이 존재할 때만 컬럼/인덱스 수정
+    if sa.inspect(conn).has_table('rag_analysis_results'):
+        try:
+            op.alter_column('rag_analysis_results', 'status',
+                       existing_type=mysql.VARCHAR(length=50),
+                       type_=sa.Enum('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', name='analysisstatus'),
+                       nullable=True)
+        except Exception:
+            pass
+        try:
+            op.alter_column('rag_analysis_results', 'repositories_data',
+                       existing_type=mysql.MEDIUMTEXT(),
+                       type_=sa.Text(),
+                       existing_nullable=True)
+        except Exception:
+            pass
+        try:
+            op.alter_column('rag_analysis_results', 'correlation_data',
+                       existing_type=mysql.MEDIUMTEXT(),
+                       type_=sa.Text(),
+                       existing_nullable=True)
+        except Exception:
+            pass
+        try:
+            op.alter_column('rag_analysis_results', 'tech_specs_summary',
+                       existing_type=mysql.MEDIUMTEXT(),
+                       type_=sa.Text(),
+                       existing_nullable=True)
+        except Exception:
+            pass
+        # rag_analysis_results 인덱스도 방어적으로 제거 및 생성
+        try:
+            conn.exec_driver_sql("DROP INDEX IF EXISTS analysis_id ON rag_analysis_results")
+        except Exception:
+            pass
+        try:
+            conn.exec_driver_sql("DROP INDEX IF EXISTS idx_analysis_id ON rag_analysis_results")
+        except Exception:
+            pass
+        try:
+            conn.exec_driver_sql("DROP INDEX IF EXISTS idx_git_url ON rag_analysis_results")
+        except Exception:
+            pass
+        rag_idx_names = {idx['name'] for idx in sa.inspect(conn).get_indexes('rag_analysis_results')}
+        if op.f('ix_rag_analysis_results_analysis_id') not in rag_idx_names:
+            op.create_index(op.f('ix_rag_analysis_results_analysis_id'), 'rag_analysis_results', ['analysis_id'], unique=True)
+        if op.f('ix_rag_analysis_results_git_url') not in rag_idx_names:
+            op.create_index(op.f('ix_rag_analysis_results_git_url'), 'rag_analysis_results', ['git_url'], unique=False)
+        if op.f('ix_rag_analysis_results_id') not in rag_idx_names:
+            op.create_index(op.f('ix_rag_analysis_results_id'), 'rag_analysis_results', ['id'], unique=False)
     op.alter_column('repository_analyses', 'status',
                existing_type=mysql.VARCHAR(length=50),
                type_=sa.Enum('PENDING', 'CLONING', 'ANALYZING', 'COMPLETED', 'FAILED', name='repositorystatus'),
                existing_nullable=True,
                existing_server_default=sa.text("'PENDING'"))
-    op.alter_column('repository_analyses', 'commit_message',
-               existing_type=mysql.MEDIUMTEXT(),
-               type_=sa.Text(),
-               existing_nullable=True)
-    op.alter_column('repository_analyses', 'ast_data',
-               existing_type=mysql.MEDIUMTEXT(),
-               type_=sa.Text(),
-               existing_nullable=True)
+    # Widen/keep types to avoid data truncation
+    try:
+        op.alter_column('repository_analyses', 'commit_message',
+                   existing_type=mysql.MEDIUMTEXT(),
+                   type_=mysql.LONGTEXT(),
+                   existing_nullable=True)
+    except Exception:
+        pass
+    try:
+        op.alter_column('repository_analyses', 'ast_data',
+                   existing_type=mysql.MEDIUMTEXT(),
+                   type_=mysql.LONGTEXT(),
+                   existing_nullable=True)
+    except Exception:
+        pass
     # repository_analyses 인덱스 제거도 방어적으로 처리
     try:
         conn.exec_driver_sql("DROP INDEX IF EXISTS idx_commit_hash ON repository_analyses")
@@ -451,7 +548,8 @@ def downgrade() -> None:
     mysql_default_charset='utf8mb4',
     mysql_engine='InnoDB'
     )
-    op.create_index('ix_langflow_tool_mappings_tool_contexts', 'langflow_tool_mappings', ['context'], unique=True)
+    # 하나의 context에 여러 flow가 매핑될 수 있으므로 unique=False
+    op.create_index('ix_langflow_tool_mappings_tool_contexts', 'langflow_tool_mappings', ['context'], unique=False)
     op.create_index('ix_langflow_tool_mappings_id', 'langflow_tool_mappings', ['id'], unique=False)
     op.drop_index(op.f('ix_ast_nodes_id'), table_name='ast_nodes')
     op.drop_table('ast_nodes')
