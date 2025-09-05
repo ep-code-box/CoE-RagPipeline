@@ -1,5 +1,11 @@
 # CoE RAG Pipeline
 
+문서 맵
+- 배포/기동: `../docs/DEPLOY.md`
+- 마이그레이션 운영: `../docs/OPERATIONS.md`
+- Swagger/UI 경로/사용: `../docs/SWAGGER_GUIDE.md`
+- cURL 예시 모음: `../docs/curl-checks.md`
+
 ## 1. 프로젝트 개요
 
 이 프로젝트는 Git 리포지토리, 데이터베이스 스키마, 파일, URL 등 다양한 소스로부터 정보를 분석하고 벡터화하여 RAG(Retrieval-Augmented Generation) 시스템을 구축하는 파이프라인입니다.
@@ -31,106 +37,18 @@
 
 ## 3. 시작하기
 
-### 사전 요구사항
-
-- Docker
-- Docker Compose
-
-### 실행 방법
-
-이 서비스는 단독으로 실행되지 않으며, 프로젝트 최상위 디렉토리의 `docker-compose.yml`을 통해 전체 시스템의 일부로 실행되어야 합니다.
-
-1.  **프로젝트 클론**:
-    ```bash
-    git clone <repository_url>
-    cd CoE
-    ```
-
-2.  **환경 변수 설정**:
-    `CoE-RagPipeline/.env.sample` 파일을 `CoE-RagPipeline/.env`로 복사하고, 필요한 API 키 및 데이터베이스 정보를 입력합니다.
-
-3.  **Docker Compose 실행**:
-    프로젝트 최상위 디렉토리에서 아래 명령어를 실행합니다.
-    ```bash
-    docker compose up --build -d
-    ```
-
-4.  **로그 확인**:
-    ```bash
-    docker compose logs -f coe-ragpipeline
-    ```
+운영/배포/기동 절차는 최상위 문서에서 관리합니다. 아래 문서를 참고하세요.
+- 전체 배포 및 완전 격리 스택: `../docs/DEPLOY.md`
 
 ## 5. 운영 시 DB 마이그레이션
 
-- 기본값: 스킵. 컨테이너 시작 시 Alembic을 자동 실행하지 않도록 설정되어 있습니다.
-- 배포 시 1회 적용 방법:
-  - Compose 환경변수: `RUN_MIGRATIONS=true docker compose up -d coe-ragpipeline`
-  - 이미 기동된 경우: `docker compose exec coe-ragpipeline alembic upgrade head`
-- 상세한 운영 가이드: 최상위 `docs/OPERATIONS.md`
+정책과 실행 방법은 `../docs/OPERATIONS.md`를 참고하세요.
 
 ## 4. API 사용 예시
 
-### 4.1. Git 저장소 분석
-```bash
-curl -X POST "http://localhost:8001/api/v1/analyze" \
-  -H "Content-Type: application/json" \
-  -d {
-    "repositories": [
-      {
-        "url": "https://github.com/your-repo/project.git",
-        "branch": "main"
-      }
-    ],
-    "include_ast": true,
-    "include_tech_spec": true,
-    "include_correlation": true
-  }
-```
-
-### 4.2. 소스 코드 요약
-```bash
-curl -X POST "http://localhost:8001/api/v1/source-summary/summarize-repository/YOUR_ANALYSIS_ID" \
-  -H "Content-Type: application/json" \
-  -d {
-    "max_files": 100,
-    "batch_size": 5,
-    "embed_to_vector_db": true
-  }
-```
-
-### 4.3. 문서 생성
-```bash
-curl -X POST "http://localhost:8001/api/v1/documents/generate?use_source_summaries=true" \
-  -H "Content-Type: application/json" \
-  -d {
-    "analysis_id": "YOUR_ANALYSIS_ID",
-    "document_types": ["development_guide"],
-    "language": "korean"
-  }
-```
-
-### 4.4. RDB 스키마 임베딩
-```bash
-curl -X POST http://localhost:8001/api/v1/embed_rdb_schema
-```
-
-### 4.5. 벡터 유사도 검색
-```bash
-curl -X POST "http://localhost:8001/api/v1/search" \
-  -H "Content-Type: application/json" \
-  -d { "query": "사용자 정보 테이블", "k": 5, "group_name": "UserService" }
-```
-
-### 4.6. 콘텐츠 임베딩
-
-파일, URL 또는 직접 제공된 텍스트 콘텐츠를 임베딩하여 벡터 데이터베이스에 저장합니다. `group_name`을 지정하여 임베딩된 콘텐츠를 그룹화할 수 있습니다.
-
-**URL 임베딩 예시:**
-```bash
-curl -X POST "http://localhost:8001/api/v1/embed-content" \
-  -H "Content-Type: application/json" \
-  -d { "source_type": "url", "source_data": "https://www.example.com/some-article", "group_name": "web_articles", "title": "Interesting Article" }
-```
+Swagger 경로와 주요 예시는 다음 문서에서 확인하세요.
+- Swagger/UI: `../docs/SWAGGER_GUIDE.md`
+- cURL 예시 모음: `../docs/curl-checks.md`
 
 ## 5. 프로젝트 구조 상세
 
