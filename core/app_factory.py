@@ -85,6 +85,10 @@ class AppFactory:
             docs_url="/docs",
             redoc_url="/redoc", 
             openapi_url="/openapi.json",
+            # Nginx 등 프록시 하위 경로(/rag)로 서비스될 때를 위한 루트 경로 설정
+            # 환경변수 ROOT_PATH로 제어 (빈 값이면 직접 포트 접근 시에도 문제 없음)
+            root_path=settings.ROOT_PATH,
+            root_path_in_servers=True,
             swagger_ui_parameters={
                 "defaultModelsExpandDepth": 2,
                 "defaultModelExpandDepth": 2,

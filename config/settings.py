@@ -15,6 +15,10 @@ class Settings:
     RELOAD: bool = True
     LOG_LEVEL: str = "info"
     
+    # 애플리케이션 루트 경로(프록시 하위 경로에서 서비스할 때 사용)
+    # 예: Nginx에서 /rag/로 프록시되는 경우 ROOT_PATH=/rag
+    ROOT_PATH: str = os.getenv("ROOT_PATH", "")
+    
     # 디렉토리 설정
     RESULTS_DIR: str = "output/results"
     DOCUMENTS_DIR: str = "output/documents"
