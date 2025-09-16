@@ -196,5 +196,11 @@ class EmbeddingResponse(BaseModel):
     usage: EmbeddingUsage = Field(..., description="The usage statistics for the embedding request.")
 
 
+# --- ITSD Schemas ---
+class ItsdRecommendationRequest(BaseModel):
+    title: str = Field(..., description="ITSD 요청 제목")
+    description: str = Field(..., description="ITSD 요청 상세 내용")
+
+
 # Update forward references
 ASTNode.model_rebuild()

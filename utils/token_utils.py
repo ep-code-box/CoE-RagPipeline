@@ -88,6 +88,68 @@ class TokenUtils:
         estimated_tokens = int(estimated_tokens * 1.2)
         
         return estimated_tokens
+
+    @staticmethod
+    def sanitize_text_basic(text: str) -> str:
+        """Basic sanitization for free-form text.
+
+        - Replace CR/LF with spaces
+        - Collapse consecutive whitespace
+        """
+        if text is None:
+            return ""
+        s = str(text).replace('\r', ' ').replace('\n', ' ')
+        # collapse whitespace
+        s = ' '.join(s.split())
+        return s
+
+    @staticmethod
+    def choose_split_params(
+        sample_texts: List[str],
+        candidate_chunk_sizes: List[int],
+        candidate_overlaps: List[int],
+        target_avg_tokens: float = 350.0,
+    ) -> tuple[int, int]:
+        """Heuristically select chunk_size/overlap to match target avg tokens.
+
+        Uses TokenUtils.estimate_tokens and a simple deviation score.
+        Returns (best_chunk_size, best_overlap).
+        """
+        # Fallbacks
+        if not sample_texts:
+            return max(candidate_chunk_sizes or [512]), max(candidate_overlaps or [80])
+
+        try:
+            from langchain.text_splitter import RecursiveCharacterTextSplitter
+        except Exception:
+            # If splitter unavailable, return a reasonable default
+            return max(candidate_chunk_sizes or [512]), max(candidate_overlaps or [80])
+
+        def score_params(chunk_size: int, overlap: int) -> float:
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size, chunk_overlap=overlap, length_function=len
+            )
+            chunks: List[str] = []
+            for t in sample_texts:
+                chunks.extend(splitter.split_text(t))
+            if not chunks:
+                return float('inf')
+            token_counts = [TokenUtils.estimate_tokens(c) for c in chunks]
+            avg_tokens = sum(token_counts) / len(token_counts)
+            total_chunks = len(chunks)
+            # prefer closer to target, fewer chunks
+            return abs(avg_tokens - target_avg_tokens) + (total_chunks * 0.01)
+
+        best = None
+        best_score = float('inf')
+        for cs in candidate_chunk_sizes or [512]:
+            for ov in candidate_overlaps or [80]:
+                sc = score_params(cs, ov)
+                if sc < best_score:
+                    best_score = sc
+                    best = (cs, ov)
+
+        return best or (512, 80)
     
     @staticmethod
     def get_model_limit(model_name: str, reserve_for_completion: int = 4000) -> int:

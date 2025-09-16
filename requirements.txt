@@ -19,6 +19,9 @@ langchain-openai
 langchain-community
 langchain-chroma
 chromadb
+pandas
+openpyxl
+tiktoken
 
 # AST 분석을 위한 라이브러리들
 ast-decompiler
