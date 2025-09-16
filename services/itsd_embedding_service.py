@@ -111,7 +111,7 @@ class ItsdEmbeddingService(EmbeddingService):
         logger.info("LLM client initialized for reranking (ITSD).")
 
     # --- ITSD Excel embedding (moved from ItsdService) ---
-    async def embed_itsd_requests_from_excel_bytes(self, file_content: bytes, progress_cb=None) -> int:
+    def embed_itsd_requests_from_excel_bytes(self, file_content: bytes, progress_cb=None) -> int:
         """
         Excel(.xlsx) 파일 바이트를 파싱하여 ITSD 요청 데이터를 임베딩합니다.
 

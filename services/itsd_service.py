@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import os
-from typing import List, Dict, Any
+from typing import Dict, Any
 from fastapi import Depends
 from services.itsd_embedding_service import (
     ItsdEmbeddingService,
@@ -17,7 +18,6 @@ class ItsdService:
 
     def __init__(self, embedding_service: ItsdEmbeddingService):
         self.embedding_service = embedding_service
-        self.group_name = "itsd_requests"
         # LLM 클라이언트 초기화
         # 전역 타임아웃 비적용: 사용자 요구에 따라 기본 동작 유지
         self.llm_client = OpenAI(
@@ -40,7 +40,13 @@ class ItsdService:
         """
         Excel(.xlsx) 파일 내용을 읽어 ITSD 요청 데이터를 임베딩하고 저장합니다.
         """
-        return await self.embedding_service.embed_itsd_requests_from_excel_bytes(file_content, progress_cb=progress_cb)
+        # Run the largely synchronous embedding routine in a worker thread so the
+        # event loop remains responsive for status polling and job queuing.
+        return await asyncio.to_thread(
+            self.embedding_service.embed_itsd_requests_from_excel_bytes,
+            file_content,
+            progress_cb=progress_cb,
+        )
 
     async def recommend_assignee(
         self,
