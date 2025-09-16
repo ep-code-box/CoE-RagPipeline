@@ -54,6 +54,27 @@ class Settings:
     TOKEN_SAFETY_MARGIN: int = int(os.getenv("TOKEN_SAFETY_MARGIN", "2000"))
     ENABLE_AUTO_CHUNKING: bool = os.getenv("ENABLE_AUTO_CHUNKING", "true").lower() == "true"
     LLM_TIMEOUT_SECONDS: int = int(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
+
+    # 검색 리랭킹 설정 (성능/비용 최적화용)
+    ENABLE_RERANKING: bool = os.getenv("ENABLE_RERANKING", "false").lower() == "true"
+    RERANK_MULTIPLIER: int = int(os.getenv("RERANK_MULTIPLIER", "5"))
+    RERANK_MAX_CANDIDATES: int = int(os.getenv("RERANK_MAX_CANDIDATES", "30"))
+    RERANK_CONTENT_CHARS: int = int(os.getenv("RERANK_CONTENT_CHARS", "1000"))
+    RERANK_MODEL: str = os.getenv("RERANK_MODEL", "gpt-4o-mini")
+
+    # 임베딩/요약 커버리지 설정 (대형 레포지토리 제어)
+    EMBEDDING_CHUNK_SIZE: int = int(os.getenv("EMBEDDING_CHUNK_SIZE", "1000"))
+    EMBEDDING_CHUNK_OVERLAP: int = int(os.getenv("EMBEDDING_CHUNK_OVERLAP", "200"))
+
+    CONTENT_EMBEDDING_CHUNK_SIZE: int = int(os.getenv("CONTENT_EMBEDDING_CHUNK_SIZE", str(EMBEDDING_CHUNK_SIZE)))
+    CONTENT_EMBEDDING_CHUNK_OVERLAP: int = int(os.getenv("CONTENT_EMBEDDING_CHUNK_OVERLAP", str(EMBEDDING_CHUNK_OVERLAP)))
+
+    SUMMARY_MAX_FILES_DEFAULT: int = int(os.getenv("SUMMARY_MAX_FILES_DEFAULT", "100"))
+    SUMMARY_BATCH_SIZE_DEFAULT: int = int(os.getenv("SUMMARY_BATCH_SIZE_DEFAULT", "5"))
+    SUMMARY_MAX_FILE_TOKENS: int = int(os.getenv("SUMMARY_MAX_FILE_TOKENS", "6000"))
+    SUMMARY_MAX_CONCURRENT_REQUESTS: int = int(os.getenv("SUMMARY_MAX_CONCURRENT_REQUESTS", "3"))
+    SUMMARY_RETRY_ATTEMPTS: int = int(os.getenv("SUMMARY_RETRY_ATTEMPTS", "3"))
+    SUMMARY_RETRY_DELAY: float = float(os.getenv("SUMMARY_RETRY_DELAY", "1.0"))
     
     def __init__(self):
         # 필요한 디렉토리 생성

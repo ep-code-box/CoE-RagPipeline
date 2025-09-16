@@ -91,7 +91,7 @@ router = APIRouter(
 async def search_embeddings(request: SearchRequest = Body(...)):
     """벡터 유사도 검색 - 의미적 검색으로 관련 문서를 찾습니다."""
     try:
-        from services.embedding_service import EmbeddingService
+        from services.embedding_service import get_embedding_service
         from config.settings import settings
         
         query = request.query
@@ -115,7 +115,7 @@ async def search_embeddings(request: SearchRequest = Body(...)):
             filter_metadata["group_name"] = group_name
             logger.info(f"Searching with group_name filter: {group_name}")
 
-        embedding_service = EmbeddingService()
+        embedding_service = get_embedding_service()
         results = embedding_service.search_similar_documents(
             query, 
             k=k, 
@@ -156,10 +156,10 @@ async def search_embeddings(request: SearchRequest = Body(...)):
 async def get_embedding_stats():
     """벡터 데이터베이스 통계 조회 - ChromaDB의 상태와 통계를 확인합니다."""
     try:
-        from services.embedding_service import EmbeddingService
+        from services.embedding_service import get_embedding_service
         from config.settings import settings
         
-        embedding_service = EmbeddingService()
+        embedding_service = get_embedding_service()
         stats = embedding_service.get_collection_stats()
         return stats
     except Exception as e:
@@ -196,13 +196,13 @@ async def create_text_embeddings(request: EmbeddingRequest):
     OpenAI 호환 형식으로 텍스트 임베딩을 생성합니다.
     """
     try:
-        from services.embedding_service import EmbeddingService
+        from services.embedding_service import get_embedding_service
         if isinstance(request.input, str):
             texts = [request.input]
         else:
             texts = request.input
 
-        embedding_service = EmbeddingService()
+        embedding_service = get_embedding_service()
         
         # Use the new create_embeddings method
         embeddings_vectors = embedding_service.create_embeddings(texts)
@@ -229,8 +229,8 @@ async def get_all_group_names():
     ChromaDB에 저장된 모든 문서에서 유니크한 `group_name` 목록을 조회합니다.
     """
     try:
-        from services.embedding_service import EmbeddingService
-        embedding_service = EmbeddingService()
+        from services.embedding_service import get_embedding_service
+        embedding_service = get_embedding_service()
         group_names = embedding_service.get_all_group_names()
         return group_names
     except Exception as e:

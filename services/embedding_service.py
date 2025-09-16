@@ -15,6 +15,20 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+_embedding_service_singleton = None
+
+
+def get_embedding_service() -> "EmbeddingService":
+    """Process-wide singleton provider for EmbeddingService.
+
+    Avoids reinitializing embeddings model, Chroma client, and LLM client per request.
+    """
+    global _embedding_service_singleton
+    if _embedding_service_singleton is None:
+        _embedding_service_singleton = EmbeddingService()
+    return _embedding_service_singleton
+
+
 class EmbeddingService:
     """분석 결과를 embedding하고 Chroma에 저장하는 서비스"""
     
@@ -44,10 +58,11 @@ class EmbeddingService:
             
         self.embeddings = OpenAIEmbeddings(**embedding_kwargs)
         
-        # 텍스트 분할기 초기화
+        # 텍스트 분할기 초기화 (설정 기반)
+        from config.settings import settings as _settings
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=int(getattr(_settings, "EMBEDDING_CHUNK_SIZE", 1000)),
+            chunk_overlap=int(getattr(_settings, "EMBEDDING_CHUNK_OVERLAP", 200)),
             length_function=len,
         )
         
@@ -68,13 +83,21 @@ class EmbeddingService:
         )
         logger.info(f"Connected to ChromaDB server at {self.chroma_host}:{self.chroma_port}, collection: {self.collection_name}")
 
-        # LLM 클라이언트 초기화 (리랭킹용)
-        from openai import OpenAI # OpenAI 임포트
-        self.llm_client = OpenAI(
-            api_key=self.openai_api_key,
-            base_url=self.openai_api_base
-        )
-        logger.info("LLM client initialized for reranking.")
+        # LLM 클라이언트 초기화 (리랭킹용, 필요 시에만)
+        self.llm_client = None
+        try:
+            from config.settings import settings as _settings
+            if getattr(_settings, "ENABLE_RERANKING", False):
+                from openai import OpenAI  # OpenAI 임포트
+                self.llm_client = OpenAI(
+                    api_key=self.openai_api_key,
+                    base_url=self.openai_api_base
+                )
+                logger.info("LLM client initialized for reranking.")
+            else:
+                logger.info("LLM reranking disabled by settings (ENABLE_RERANKING=false).")
+        except Exception as e:
+            logger.warning(f"LLM client init skipped/failed: {e}")
     
     def process_analysis_result(self, analysis_result: AnalysisResult) -> Dict[str, Any]:
         """
@@ -87,14 +110,50 @@ class EmbeddingService:
             처리 결과 정보
         """
         try:
+            # Build documents from analysis
             documents = self._create_documents_from_analysis(analysis_result)
+            # Chunk long documents and attach group_name
+            chunked_documents: List[Document] = []
+            for doc in documents:
+                text = doc.page_content or ""
+                group_name = getattr(analysis_result, 'group_name', None)
+                chunks = self.text_splitter.split_text(text) if text else []
+                total = max(len(chunks), 1)
+                if not chunks:
+                    # empty or very small doc
+                    new_meta = dict(doc.metadata)
+                    if group_name:
+                        new_meta["group_name"] = group_name
+                    new_meta["chunk_index"] = 0
+                    new_meta["total_chunks"] = 1
+                    chunked_documents.append(Document(page_content=text, metadata=new_meta))
+                else:
+                    for idx, chunk in enumerate(chunks):
+                        new_meta = dict(doc.metadata)
+                        if group_name:
+                            new_meta["group_name"] = group_name
+                        new_meta["chunk_index"] = idx
+                        new_meta["total_chunks"] = total
+                        chunked_documents.append(Document(page_content=chunk, metadata=new_meta))
+            documents = chunked_documents
             
             if not documents:
                 logger.warning(f"No documents created for analysis {analysis_result.analysis_id}")
                 return {"status": "no_documents", "count": 0}
             
-            # 문서들을 Chroma에 저장
-            doc_ids = self.vectorstore.add_documents(documents)
+            # 문서들을 Chroma에 저장 (stable IDs)
+            import hashlib
+            ids: List[str] = []
+            for d in documents:
+                base = (
+                    f"{analysis_result.analysis_id}|"
+                    f"{d.metadata.get('document_type','')}|"
+                    f"{d.metadata.get('repository_url','')}|"
+                    f"{d.metadata.get('file_path','')}|"
+                    f"{d.metadata.get('chunk_index',0)}"
+                )
+                ids.append(hashlib.sha1(base.encode('utf-8')).hexdigest())
+            doc_ids = self.vectorstore.add_documents(documents, ids=ids)
             
             logger.info(f"Successfully embedded {len(documents)} documents for analysis {analysis_result.analysis_id}")
             
@@ -133,14 +192,20 @@ class EmbeddingService:
             documents = []
             file_summaries = summaries["summaries"]
             
+            import hashlib
+            ids: List[str] = []
             for file_path, summary_data in file_summaries.items():
                 if not summary_data or "summary" not in summary_data:
                     continue
                 
-                # Document 객체 생성
-                doc = Document(
-                    page_content=summary_data["summary"],
-                    metadata={
+                # Chunk summary content
+                summary_text = summary_data.get("summary", "")
+                chunks = self.text_splitter.split_text(summary_text) if summary_text else []
+                total = max(len(chunks), 1)
+                if not chunks:
+                    chunks = [summary_text]
+                for idx, chunk in enumerate(chunks):
+                    meta = {
                         "analysis_id": analysis_id,
                         "source_type": "source_summary",
                         "file_path": file_path,
@@ -150,17 +215,23 @@ class EmbeddingService:
                         "tokens_used": summary_data.get("tokens_used", 0),
                         "summarized_at": summary_data.get("summarized_at", ""),
                         "model_used": summary_data.get("model_used", ""),
-                        "file_hash": summary_data.get("file_hash", "")
+                        "file_hash": summary_data.get("file_hash", ""),
+                        "chunk_index": idx,
+                        "total_chunks": total
                     }
-                )
-                documents.append(doc)
+                    if group_name:
+                        meta["group_name"] = group_name
+                    documents.append(Document(page_content=chunk, metadata=meta))
+                    # Stable ID per file+chunk
+                    base = f"{analysis_id}|{file_path}|{summary_data.get('file_hash','')}|{idx}"
+                    ids.append(hashlib.sha1(base.encode('utf-8')).hexdigest())
             
             if not documents:
                 logger.warning(f"No valid summary documents created for analysis {analysis_id}")
                 return {"status": "no_valid_summaries", "count": 0}
             
             # 문서들을 Chroma에 저장
-            doc_ids = self.vectorstore.add_documents(documents)
+            doc_ids = self.vectorstore.add_documents(documents, ids=ids if ids else None)
             
             logger.info(f"Successfully embedded {len(documents)} source summary documents for analysis {analysis_id}")
             
@@ -199,7 +270,8 @@ class EmbeddingService:
                         "repository_url": str(repo_analysis.repository.url),
                         "repository_name": repo_analysis.repository.name or "unknown",
                         "document_type": "repository_summary",
-                        "created_at": analysis_result.created_at.isoformat() if analysis_result.created_at else None
+                        "created_at": analysis_result.created_at.isoformat() if analysis_result.created_at else None,
+                        "group_name": getattr(analysis_result, 'group_name', None)
                     }
                 ))
             
@@ -215,9 +287,10 @@ class EmbeddingService:
                             "repository_name": repo_analysis.repository.name or "unknown",
                             "document_type": "tech_spec",
                             "language": tech_spec.language,
-                            "package_manager": tech_spec.package_manager
+                            "package_manager": tech_spec.package_manager,
+                            "group_name": getattr(analysis_result, 'group_name', None)
                         }
-                    ))
+                ))
             
             # 3. AST 분석 결과 문서들
             for file_path, ast_nodes in repo_analysis.ast_analysis.items():
@@ -262,7 +335,7 @@ class EmbeddingService:
                         "analysis_id": analysis_result.analysis_id,
                         "document_type": "correlation_analysis",
                         "repository_count": len(analysis_result.repositories),
-                        "group_name": group_name # <-- 이 줄 추가
+                        "group_name": getattr(analysis_result, 'group_name', None)
                     }
                 ))
         
@@ -405,37 +478,58 @@ class EmbeddingService:
                     filter_metadata = {"analysis_id": latest_analysis_id}
                     logger.info(f"Searching with latest analysis for repository {repository_url}: {latest_analysis_id}")
             
-            # 필터 적용하여 검색
+            # 필터 적용하여 검색 (초기 후보 확장)
+            from config.settings import settings as _settings
+            rerank_multiplier = int(getattr(_settings, "RERANK_MULTIPLIER", 5))
+            rerank_max_candidates = int(getattr(_settings, "RERANK_MAX_CANDIDATES", 30))
+            initial_k = min(max(k * rerank_multiplier, k), rerank_max_candidates)
             if filter_metadata:
                 initial_results = self.vectorstore.similarity_search_with_score(
-                    query, k=k*5, filter=filter_metadata # 초기 검색 결과는 더 많이 가져옴
+                    query, k=initial_k, filter=filter_metadata
                 )
             else:
-                initial_results = self.vectorstore.similarity_search_with_score(query, k=k*5)
+                initial_results = self.vectorstore.similarity_search_with_score(query, k=initial_k)
             
             if not initial_results:
                 return []
 
-            # LLM 기반 리랭킹
+            # LLM 기반 리랭킹 (옵션)
             reranked_results = []
             documents_to_rerank = []
+            # 트렁케이션 길이
+            rerank_content_chars = int(getattr(_settings, "RERANK_CONTENT_CHARS", 1000))
             for i, (doc, original_score) in enumerate(initial_results):
                 documents_to_rerank.append({
                     "index": i,
-                    "content": doc.page_content,
+                    "content": (doc.page_content[:rerank_content_chars] if doc.page_content else ""),
                     "metadata": doc.metadata,
                     "original_score": original_score
                 })
             
+            # LLM 리랭킹 비활성화 시, 원본 점수로 정렬 반환
+            if not getattr(_settings, "ENABLE_RERANKING", False) or not self.llm_client:
+                reranked_results = [
+                    {
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                        "original_score": score,
+                        "rerank_score": score
+                    }
+                    for doc, score in initial_results
+                ]
+                reranked_results.sort(key=lambda x: x["original_score"], reverse=True)
+                return reranked_results[:k]
+
             # LLM에 리랭킹 요청 프롬프트 구성
             prompt_messages = [
-                {"role": "system", "content": "You are a helpful assistant that reranks documents based on their relevance to a query. Provide the reranked documents as a JSON array of objects, each with 'index' and 'rerank_score' (a float between 0 and 1)."},
-                {"role": "user", "content": f"Query: {query}\n\nDocuments to rerank (JSON array of objects with 'index' and 'content'):\n{json.dumps(documents_to_rerank, ensure_ascii=False, indent=2)}\n\nRerank these documents based on their relevance to the query. Output a JSON array of objects, each with 'index' and 'rerank_score' (a float between 0 and 1)."}
+                {"role": "system", "content": "You rerank documents by relevance to a query. Respond with a JSON array of objects, each with 'index' and 'rerank_score' (0-1)."},
+                {"role": "user", "content": f"Query: {query}\n\nDocuments to rerank (JSON array of objects with 'index' and 'content'):\n{json.dumps(documents_to_rerank, ensure_ascii=False)}\n\nReturn only JSON array with 'index' and 'rerank_score'."}
             ]
 
             try:
+                llm_model = getattr(_settings, "RERANK_MODEL", "gpt-4o-mini")
                 llm_response = self.llm_client.chat.completions.create(
-                    model="gpt-4o-mini", # 리랭킹에 사용할 LLM 모델
+                    model=llm_model, # 리랭킹에 사용할 LLM 모델
                     messages=prompt_messages,
                     temperature=0.0, # 리랭킹은 창의성보다 정확성이 중요
                     max_tokens=1024 # 충분한 응답 길이

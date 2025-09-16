@@ -73,10 +73,10 @@ class SourceSummaryService:
         self.cache_dir = Path("cache/source_summaries")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
-        # 성능 최적화 설정
-        self.max_concurrent_requests = 3  # 동시 LLM 요청 수 제한
-        self.retry_attempts = 3  # 재시도 횟수
-        self.retry_delay = 1.0  # 재시도 간격 (초)
+        # 성능 최적화 설정 (설정 기반)
+        self.max_concurrent_requests = settings.SUMMARY_MAX_CONCURRENT_REQUESTS
+        self.retry_attempts = settings.SUMMARY_RETRY_ATTEMPTS
+        self.retry_delay = settings.SUMMARY_RETRY_DELAY
         
         # 스레드 풀 실행자
         self.executor = ThreadPoolExecutor(max_workers=self.max_concurrent_requests)
@@ -230,7 +230,7 @@ class SourceSummaryService:
             
             # 파일이 너무 크면 토큰 기준으로 잘라내기
             estimated_tokens = TokenUtils.estimate_tokens(source_code)
-            max_file_tokens = 6000  # 보수적으로 설정
+            max_file_tokens = settings.SUMMARY_MAX_FILE_TOKENS  # 설정 기반
             
             if estimated_tokens > max_file_tokens:
                 # 토큰 기준으로 잘라내기
@@ -298,8 +298,8 @@ class SourceSummaryService:
     async def summarize_directory(
         self, 
         directory_path: str,
-        max_files: int = 100,
-        batch_size: int = 5
+        max_files: int = None,
+        batch_size: int = None
     ) -> Dict[str, Any]:
         """
         디렉토리 내의 모든 소스코드 파일을 요약합니다.
@@ -316,6 +316,12 @@ class SourceSummaryService:
             if not os.path.exists(directory_path):
                 raise ValueError(f"Directory not found: {directory_path}")
             
+            # 파라미터 기본값 보정
+            if max_files is None:
+                max_files = settings.SUMMARY_MAX_FILES_DEFAULT
+            if batch_size is None:
+                batch_size = settings.SUMMARY_BATCH_SIZE_DEFAULT
+
             # 요약 대상 파일 수집
             target_files = []
             for root, dirs, files in os.walk(directory_path):

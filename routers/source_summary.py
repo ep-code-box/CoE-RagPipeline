@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 from services.source_summary_service import SourceSummaryService
-from services.embedding_service import EmbeddingService
+from services.embedding_service import get_embedding_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ router = APIRouter(
 
 # 서비스 인스턴스
 source_summary_service = SourceSummaryService()
-embedding_service = EmbeddingService()
+embedding_service = get_embedding_service()
 
 
 @router.post(

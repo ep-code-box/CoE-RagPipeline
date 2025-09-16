@@ -1,5 +1,3 @@
-"""Enhanced analysis API routers"""
+"""Enhanced analysis routers have been removed. Use /api/v1/analyze flags instead."""
 
-from .enhanced_analysis import router as enhanced_analysis_router
-
-__all__ = ['enhanced_analysis_router']
+__all__ = []

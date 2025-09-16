@@ -32,9 +32,6 @@ from core.database import (
 )
 from services.rag_analysis_service import RagAnalysisService
 from services.rag_repository_analysis_service import RagRepositoryAnalysisService
-from services.rag_code_file_service import RagCodeFileService
-from services.rag_tech_dependency_service import RagTechDependencyService
-from services.rag_document_analysis_service import RagDocumentAnalysisService
 
 # 메인 분석 서비스 클래스
 class AnalysisService:
@@ -50,6 +47,20 @@ class AnalysisService:
         from core.database import save_analysis_to_db
         
         logger.info(f"Starting analysis for {analysis_id}")
+
+        def set_progress(step: str, percent: int):
+            try:
+                if analysis_id in analysis_results:
+                    ar = analysis_results[analysis_id]
+                    if getattr(ar, 'progress', None) is None:
+                        ar.progress = {}
+                    ar.progress.update({
+                        "step": step,
+                        "percent": max(0, min(100, percent)),
+                        "updated_at": datetime.now().isoformat()
+                    })
+            except Exception:
+                pass
         
         # Git 분석기 인스턴스를 메서드 전체에서 사용하기 위해 여기서 초기화
         git_analyzer = None
@@ -64,6 +75,15 @@ class AnalysisService:
             
             # 분석 상태를 RUNNING으로 변경
             analysis_result.status = AnalysisStatus.RUNNING
+            set_progress("starting", 5)
+            # Update DB status to RUNNING
+            try:
+                from services.rag_analysis_service import RagAnalysisService
+                from core.database import SessionLocal as _SessionLocal
+                with _SessionLocal() as _db:
+                    RagAnalysisService.start_analysis(_db, analysis_id)
+            except Exception as e:
+                logger.warning(f"Failed to mark DB analysis RUNNING: {e}")
             
             # 실제 분석 로직 수행
             try:
@@ -71,18 +91,35 @@ class AnalysisService:
                 logger.info(f"Starting Git analysis for {analysis_id}")
                 git_analyzer = GitAnalyzer()
                 await git_analyzer.perform_repository_analysis(analysis_id, request, analysis_results)
+                set_progress("git_analysis", 25)
                 
                 # AST 분석 수행 (요청된 경우)
                 if hasattr(request, 'include_ast') and request.include_ast:
                     logger.info(f"Starting AST analysis for {analysis_id}")
                     ast_analyzer = ASTAnalyzer()
                     await ast_analyzer.perform_analysis(analysis_id, request, analysis_results)
+                    set_progress("ast_analysis", 45)
                 
                 # 기술스펙 분석 수행 (요청된 경우)
                 if hasattr(request, 'include_tech_spec') and request.include_tech_spec:
                     logger.info(f"Starting tech spec analysis for {analysis_id}")
                     tech_spec_analyzer = TechSpecAnalyzer()
                     await tech_spec_analyzer.perform_analysis(analysis_id, request, analysis_results)
+                    set_progress("tech_spec", 60)
+
+                # Enhanced 옵션 플래그가 전달된 경우 로깅(향후 통합 대상)
+                try:
+                    if getattr(request, 'include_tree_sitter', False) or getattr(request, 'include_static_analysis', False) or getattr(request, 'include_dependency_analysis', False):
+                        logger.info(
+                            "Enhanced flags received (tree_sitter=%s, static=%s, deps=%s, report=%s)",
+                            getattr(request, 'include_tree_sitter', False),
+                            getattr(request, 'include_static_analysis', False),
+                            getattr(request, 'include_dependency_analysis', False),
+                            getattr(request, 'generate_report', False),
+                        )
+                        # TODO: integrate EnhancedAnalyzer here (currently available via enhanced router)
+                except Exception:
+                    pass
                 
                 # 분석 완료 처리
                 analysis_result.status = AnalysisStatus.COMPLETED
@@ -93,6 +130,7 @@ class AnalysisService:
                     # 먼저 기본 분석 결과 저장
                     save_analysis_to_db(analysis_result)
                     logger.info(f"Analysis {analysis_id} saved to database")
+                    set_progress("saving_db", 70)
                     
                     # 각 레포지토리의 상세 분석 결과를 데이터베이스에 저장 (commit 정보 포함)
                     with SessionLocal() as db:
@@ -140,12 +178,32 @@ class AnalysisService:
                     document_generation_service = DocumentGenerationService()
                     await document_generation_service.generate_documents(analysis_id, analysis_result)
                     logger.info(f"Document generation completed for analysis {analysis_id}")
+                    set_progress("documents", 80)
                 except Exception as e:
                     logger.error(f"Document generation failed for analysis {analysis_id}: {e}")
                     # 문서 생성 실패는 전체 분석 실패로 처리하지 않음
                 
+                # Embed analysis-level documents (repo summaries, tech specs)
+                try:
+                    from services.embedding_service import get_embedding_service
+                    es = get_embedding_service()
+                    es.process_analysis_result(analysis_result)
+                    logger.info(f"Analysis-level embeddings stored for {analysis_id}")
+                    set_progress("embedding", 90)
+                except Exception as e:
+                    logger.error(f"Failed to embed analysis-level docs for {analysis_id}: {e}")
+
                 logger.info(f"Analysis {analysis_id} completed successfully")
-                
+                set_progress("completed", 100)
+                # Update DB status to COMPLETED
+                try:
+                    from services.rag_analysis_service import RagAnalysisService
+                    from core.database import SessionLocal as _SessionLocal
+                    with _SessionLocal() as _db:
+                        RagAnalysisService.complete_analysis(_db, analysis_id)
+                except Exception as e:
+                    logger.warning(f"Failed to mark DB analysis COMPLETED: {e}")
+
             except Exception as e:
                 # 분석 중 발생한 오류 처리
                 logger.error(f"Error during analysis {analysis_id}: {e}")
@@ -157,6 +215,14 @@ class AnalysisService:
                     save_analysis_to_db(analysis_result)
                 except Exception as save_error:
                     logger.error(f"Failed to save failed analysis to database: {save_error}")
+                # Update DB status to FAILED
+                try:
+                    from services.rag_analysis_service import RagAnalysisService
+                    from core.database import SessionLocal as _SessionLocal
+                    with _SessionLocal() as _db:
+                        RagAnalysisService.fail_analysis(_db, analysis_id, str(e))
+                except Exception as e2:
+                    logger.warning(f"Failed to mark DB analysis FAILED: {e2}")
                 raise e
                 
         except Exception as e:

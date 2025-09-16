@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 
 from services.llm_service import LLMDocumentService, DocumentType as LLMDocumentType
 from services.source_summary_service import SourceSummaryService
-from services.embedding_service import EmbeddingService
+from services.embedding_service import get_embedding_service
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class DocumentGenerationService:
             
             llm_service = LLMDocumentService()
             summary_service = SourceSummaryService()
-            embedding_service = EmbeddingService()
+            embedding_service = get_embedding_service()
             
             # --- 1. Gather Raw Analysis Data ---
             analysis_data = {
@@ -54,11 +54,19 @@ class DocumentGenerationService:
             if clone_paths:
                 try:
                     logger.info(f"Starting source code summarization for analysis {analysis_id}")
+                    from config.settings import settings as _settings
                     source_summaries = await summary_service.summarize_repository_sources(
-                        clone_path=clone_paths[0], analysis_id=analysis_id, max_files=100, batch_size=5
+                        clone_path=clone_paths[0],
+                        analysis_id=analysis_id,
+                        max_files=_settings.SUMMARY_MAX_FILES_DEFAULT,
+                        batch_size=_settings.SUMMARY_BATCH_SIZE_DEFAULT
                     )
                     if source_summaries and source_summaries.get("summaries"):
-                        embedding_service.embed_source_summaries(summaries=source_summaries, analysis_id=analysis_id)
+                        embedding_service.embed_source_summaries(
+                            summaries=source_summaries,
+                            analysis_id=analysis_id,
+                            group_name=getattr(analysis_result, 'group_name', None)
+                        )
                         logger.info(f"Source summaries embedded for analysis {analysis_id}")
                 except Exception as e:
                     logger.error(f"Failed to summarize source code for analysis {analysis_id}: {str(e)}")

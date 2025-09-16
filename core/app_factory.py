@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import time
 
 from routers import health, analysis, embedding, document_generation, source_summary, content_embedding_router
-from routers.enhanced import enhanced_analysis
 from config.settings import settings
 from core.database import init_database
 from utils.app_initializer import initialize_services
@@ -142,7 +141,6 @@ class AppFactory:
         app.include_router(embedding.router)
         app.include_router(document_generation.router)
         app.include_router(source_summary.router)
-        app.include_router(enhanced_analysis.router)
         app.include_router(content_embedding_router.router)
 
         # Startup 이벤트 등록

@@ -526,14 +526,18 @@ class ASTAnalyzer:
                         
                         # 1. Enhanced Analyzer 시도 (Tree-sitter 기반)
                         try:
-                            if enhanced_analyzer.capabilities['tree_sitter']:
+                            # Flags from request (fallback to True as previous behavior)
+                            include_tree = getattr(request, 'include_tree_sitter', True)
+                            include_static = getattr(request, 'include_static_analysis', False)
+                            include_deps = getattr(request, 'include_dependency_analysis', False)
+                            if enhanced_analyzer.capabilities['tree_sitter'] and include_tree:
                                 logger.info(f"Using Tree-sitter for enhanced AST analysis: {repo.repository.url}")
                                 enhanced_analysis = enhanced_analyzer.analyze_repository(
                                     clone_path=repo.clone_path,
                                     files=repo.files,
-                                    include_tree_sitter=True,
-                                    include_static_analysis=False,  # AST만 수행
-                                    include_dependency_analysis=False
+                                    include_tree_sitter=include_tree,
+                                    include_static_analysis=include_static,
+                                    include_dependency_analysis=include_deps
                                 )
                                 
                                 if enhanced_analysis.get('tree_sitter_results'):

@@ -4,14 +4,14 @@ import mysql.connector
 from typing import List, Dict, Any, Optional
 
 from langchain.schema import Document
-from services.embedding_service import EmbeddingService
+from services.embedding_service import get_embedding_service
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class RDBEmbeddingService:
     def __init__(self):
-        self.embedding_service = EmbeddingService()
+        self.embedding_service = get_embedding_service()
         self.db_config = {
             "host": os.getenv("DB_HOST", "mariadb"),
             "port": int(os.getenv("DB_PORT", "3306")),

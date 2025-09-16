@@ -50,6 +50,52 @@ Swagger 경로와 주요 예시는 다음 문서에서 확인하세요.
 - Swagger/UI: `../docs/SWAGGER_GUIDE.md`
 - cURL 예시 모음: `../docs/curl-checks.md`
 
+중요: RAG Pipeline 직접 호출은 단계적으로 중단 예정이며, Backend 경유 호출을 권장합니다.
+기존 스크립트/자동화는 Backend 엔드포인트로 이전해 주세요(유예 기간 후 적용).
+
+### 분석 고급 옵션(Enhanced 플래그)
+
+기존 `/api/v1/enhanced/*` 엔드포인트는 제거되었습니다. 대신 `/api/v1/analyze` 요청 본문에 아래 플래그를 포함하세요.
+
+- `include_tree_sitter` (bool, 기본 true)
+- `include_static_analysis` (bool, 기본 true)
+- `include_dependency_analysis` (bool, 기본 true)
+- `generate_report` (bool, 기본 true)
+
+예시
+```
+POST /api/v1/analyze
+{
+  "repositories": [{"url": "https://github.com/octocat/Hello-World.git", "branch": "main"}],
+  "include_ast": true,
+  "include_tech_spec": true,
+  "include_correlation": true,
+  "include_tree_sitter": true,
+  "include_static_analysis": true,
+  "include_dependency_analysis": true,
+  "generate_report": true,
+  "group_name": "MyTeamA"
+}
+```
+
+### 요약/임베딩 커버리지 설정(대형 리포 제어)
+
+아래 환경변수로 요약/임베딩 커버리지를 조절할 수 있습니다.
+
+- 요약 파이프라인
+  - `SUMMARY_MAX_FILES_DEFAULT` (기본 100)
+  - `SUMMARY_BATCH_SIZE_DEFAULT` (기본 5)
+  - `SUMMARY_MAX_FILE_TOKENS` (기본 6000)
+  - `SUMMARY_MAX_CONCURRENT_REQUESTS` (기본 3)
+  - `SUMMARY_RETRY_ATTEMPTS` (기본 3), `SUMMARY_RETRY_DELAY` (기본 1.0)
+- 임베딩 청크
+  - `EMBEDDING_CHUNK_SIZE` (기본 1000)
+  - `EMBEDDING_CHUNK_OVERLAP` (기본 200)
+  - `CONTENT_EMBEDDING_CHUNK_SIZE` (기본 `EMBEDDING_CHUNK_SIZE`)
+  - `CONTENT_EMBEDDING_CHUNK_OVERLAP` (기본 `EMBEDDING_CHUNK_OVERLAP`)
+
+품질 우선이면 청크 크기를 작게/오버랩을 높게, 비용/속도 우선이면 반대로 조정하세요.
+
 ## 5. 프로젝트 구조 상세
 
 이 섹션에서는 `CoE-RagPipeline` 프로젝트의 주요 디렉토리와 파일들의 역할 및 중요성에 대해 상세히 설명합니다.
@@ -92,3 +138,16 @@ Swagger 경로와 주요 예시는 다음 문서에서 확인하세요.
 
 #### 6.4. LLM API 호출 실패 및 재시도
 *   **설명:** LLM API 호출 시 네트워크 문제, API 제한 초과 등으로 인해 실패할 수 있습니다. 시스템은 이러한 실패에 대해 자동으로 여러 번 재시도(retry)를 수행합니다.
+
+### 성능/비용 최적화 (Reranking)
+
+벡터 검색 결과를 LLM으로 재정렬(reranking)하는 기능이 있으며, 기본 비활성화입니다.
+환경변수로 제어해 성능/비용 균형을 맞출 수 있습니다.
+
+- `ENABLE_RERANKING` (default: `false`): `true`일 때 LLM 리랭킹 활성화
+- `RERANK_MULTIPLIER` (default: `5`): 초기 후보 수 배수 (`k * multiplier`)
+- `RERANK_MAX_CANDIDATES` (default: `30`): 리랭크 최대 후보 수 상한
+- `RERANK_CONTENT_CHARS` (default: `1000`): 각 문서 내용의 리랭크 입력 길이 제한(문자)
+- `RERANK_MODEL` (default: `gpt-4o-mini`): 리랭킹에 사용할 모델명
+
+리랭킹은 품질 향상에 도움이 되지만 비용/지연이 증가합니다. 트래픽이 많거나 응답 지연에 민감하면 `ENABLE_RERANKING=false` 유지 또는 후보 수를 줄이는 것을 권장합니다.

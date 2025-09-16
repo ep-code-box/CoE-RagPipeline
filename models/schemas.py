@@ -23,6 +23,11 @@ class AnalysisRequest(BaseModel):
     include_tech_spec: bool = True
     include_correlation: bool = True
     group_name: Optional[str] = None # <-- 이 줄 추가
+    # Enhanced analysis flags (migrated from /api/v1/enhanced)
+    include_tree_sitter: bool = Field(default=True, description="Tree-sitter AST 분석 포함 여부")
+    include_static_analysis: bool = Field(default=True, description="정적 분석 포함 여부")
+    include_dependency_analysis: bool = Field(default=True, description="의존성 분석 포함 여부")
+    generate_report: bool = Field(default=True, description="분석 리포트 생성 여부")
 
 
 class FileInfo(BaseModel):
@@ -96,6 +101,8 @@ class AnalysisResult(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     group_name: Optional[str] = None # <-- 이 줄 추가
+    # Optional progress info for live updates
+    progress: Optional[Dict[str, Any]] = None
     repositories: List[RepositoryAnalysis] = []
     correlation_analysis: Optional[CorrelationAnalysis] = None
     error_message: Optional[str] = None

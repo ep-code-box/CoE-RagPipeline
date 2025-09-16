@@ -3,21 +3,24 @@ import os
 import requests
 from typing import Dict, Any, Optional
 from urllib.parse import urlparse
+import hashlib
 
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from services.embedding_service import EmbeddingService
+from services.embedding_service import get_embedding_service
 from models.schemas import EmbedContentRequest
 
 logger = logging.getLogger(__name__)
 
 class ContentEmbeddingService:
     def __init__(self):
-        self.embedding_service = EmbeddingService()
+        # Reuse process-wide embedding service (avoid reinit per request)
+        self.embedding_service = get_embedding_service()
+        from config.settings import settings as _settings
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=int(getattr(_settings, "CONTENT_EMBEDDING_CHUNK_SIZE", 1000)),
+            chunk_overlap=int(getattr(_settings, "CONTENT_EMBEDDING_CHUNK_OVERLAP", 200)),
             length_function=len,
         )
 
@@ -88,9 +91,20 @@ class ContentEmbeddingService:
         if not documents:
             return {"status": "failed", "message": "No documents generated from content."}
 
-        # Add documents to ChromaDB
+        # Add documents to ChromaDB (use stable IDs to avoid duplicates)
         try:
-            doc_ids = self.embedding_service.vectorstore.add_documents(documents)
+            ids = []
+            for doc in documents:
+                # Stable hash based on source, title, group, and chunk index
+                key = (
+                    f"{doc.metadata.get('source_identifier','')}|"
+                    f"{doc.metadata.get('title','')}|"
+                    f"{doc.metadata.get('group_name','')}|"
+                    f"{doc.metadata.get('chunk_index',0)}"
+                )
+                ids.append(hashlib.sha1(key.encode("utf-8")).hexdigest())
+
+            doc_ids = self.embedding_service.vectorstore.add_documents(documents, ids=ids)
             logger.info(f"Successfully embedded {len(documents)} documents from {source_identifier}")
             return {
                 "status": "success",
