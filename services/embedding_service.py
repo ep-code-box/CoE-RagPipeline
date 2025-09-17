@@ -70,11 +70,18 @@ class EmbeddingService:
         import chromadb
         from chromadb.config import Settings as ChromaSettings
         
-        chroma_client = chromadb.HttpClient(
-            host=self.chroma_host,
-            port=self.chroma_port,
-            settings=ChromaSettings(allow_reset=True, anonymized_telemetry=False)
-        )
+        try:
+            chroma_client = chromadb.HttpClient(
+                host=self.chroma_host,
+                port=self.chroma_port,
+                settings=ChromaSettings(allow_reset=True, anonymized_telemetry=False)
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to connect to ChromaDB at {self.chroma_host}:{self.chroma_port}. "
+                f"Ensure the Chroma server is running and CHROMA_HOST/CHROMA_PORT are correct. Error: {e}"
+            )
+            raise
         
         self.vectorstore = Chroma(
             client=chroma_client,

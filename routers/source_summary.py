@@ -21,7 +21,6 @@ router = APIRouter(
 
 # 서비스 인스턴스
 source_summary_service = SourceSummaryService()
-embedding_service = get_embedding_service()
 
 
 @router.post(
@@ -156,6 +155,8 @@ async def summarize_repository_sources(
         embedding_result = None
         if embed_to_vector_db and summary_result.get("summaries"):
             try:
+                # Lazy init to avoid startup failures if Chroma is not yet up
+                embedding_service = get_embedding_service()
                 embedding_result = await embedding_service.embed_source_summaries(
                     summaries=summary_result,
                     analysis_id=analysis_id
@@ -256,6 +257,8 @@ async def search_source_summaries(
     try:
         logger.info(f"Searching source summaries for analysis {analysis_id} with query: {query}")
         
+        # Lazy init to avoid startup failures if Chroma is not yet up
+        embedding_service = get_embedding_service()
         search_results = await embedding_service.search_source_summaries(
             query=query,
             analysis_id=analysis_id,

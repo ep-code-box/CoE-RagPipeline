@@ -17,7 +17,6 @@ router = APIRouter(
     }
 )
 
-content_embedding_service = ContentEmbeddingService()
 
 @router.post(
     "/embed-content",
@@ -75,6 +74,8 @@ content_embedding_service = ContentEmbeddingService()
     """)
 async def embed_content_endpoint(request: EmbedContentRequest = Body(...)):
     try:
+        # Lazy init to avoid startup failures if Chroma is not yet up
+        content_embedding_service = ContentEmbeddingService()
         result = await content_embedding_service.embed_content(request)
         return result
     except (FileNotFoundError, ConnectionError, ValueError) as e:

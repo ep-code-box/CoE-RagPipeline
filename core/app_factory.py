@@ -12,7 +12,6 @@ from routers import (
     content_embedding_router,
     itsd,
 )
-from routers import database_viewer  # Chroma DB viewer endpoints
 from config.settings import settings
 from core.database import init_database
 from utils.app_initializer import initialize_services
@@ -151,8 +150,6 @@ class AppFactory:
         app.include_router(document_generation.router)
         app.include_router(source_summary.router)
         app.include_router(content_embedding_router.router)
-        # Chroma DB viewer (stats, group-names, documents, delete by group)
-        app.include_router(database_viewer.router)
         app.include_router(itsd.router)
 
         # Startup 이벤트 등록
