@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import time
 
 from routers import (
@@ -121,6 +122,15 @@ class AppFactory:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+        class ForwardedPrefixMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request: Request, call_next):
+                prefix = request.headers.get("x-forwarded-prefix")
+                if prefix:
+                    request.scope["root_path"] = prefix.rstrip("/")
+                return await call_next(request)
+
+        app.add_middleware(ForwardedPrefixMiddleware)
 
         # 요청 로깅 미들웨어 추가
         @app.middleware("http")
