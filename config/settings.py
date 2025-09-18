@@ -10,6 +10,8 @@ class Settings:
     """애플리케이션 설정 클래스"""
     
     # 서버 설정
+    APP_ENV: str = os.getenv("APP_ENV", "").lower()
+    ENABLE_DOCS: bool = os.getenv("ENABLE_DOCS", "").lower() in {"1", "true", "yes", "on"}
     # 컨테이너/프록시 환경 호환을 위해 기본은 0.0.0.0
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = 8001

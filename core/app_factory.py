@@ -55,6 +55,11 @@ class AppFactory:
         if not self.initialize_services():
             raise RuntimeError("Service initialization failed")
         
+        expose_docs = settings.ENABLE_DOCS or settings.APP_ENV in {"development", "local"}
+        docs_url = "/docs" if expose_docs else None
+        redoc_url = "/redoc" if expose_docs else None
+        openapi_url = "/openapi.json" if expose_docs else None
+
         # FastAPI 앱 생성
         app = FastAPI(
             title="🔍 CoE RAG Pipeline",
@@ -89,9 +94,9 @@ class AppFactory:
             - **ChromaDB**: 벡터 데이터베이스 (포트 6666)
             """,
             version="1.0.0",
-            docs_url="/docs",
-            redoc_url="/redoc", 
-            openapi_url="/openapi.json",
+            docs_url=docs_url,
+            redoc_url=redoc_url, 
+            openapi_url=openapi_url,
             # Nginx 등 프록시 하위 경로(/rag)로 서비스될 때를 위한 루트 경로 설정
             # 환경변수 ROOT_PATH로 제어 (빈 값이면 직접 포트 접근 시에도 문제 없음)
             root_path=settings.ROOT_PATH,
