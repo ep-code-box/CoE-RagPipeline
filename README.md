@@ -40,6 +40,16 @@
 운영/배포/기동 절차는 최상위 문서에서 관리합니다. 아래 문서를 참고하세요.
 - 전체 배포 및 완전 격리 스택: `../docs/DEPLOY.md`
 
+### 3.1. 오프라인 환경 의존성 설치
+내부망에서 `pip install`이 제한될 경우, 외부망 머신에서 아래 명령으로 휠을 준비하세요.
+```bash
+cd CoE-RagPipeline
+python -m pip download -r requirements.txt -d vendor/wheels
+python -m pip download uv -d vendor/wheels
+```
+준비한 `vendor/wheels/*.whl` 파일을 내부망 서버로 복사하면 `run.sh`가 자동으로 감지하여 `--no-index --find-links=vendor/wheels` 옵션으로 설치합니다.
+환경에 따라 다른 디렉터리를 쓰고 싶다면 `WHEEL_DIR=/path/to/wheels ./run.sh`처럼 환경 변수를 지정할 수 있습니다.
+
 ## 5. 운영 시 DB 마이그레이션
 
 정책과 실행 방법은 `../docs/OPERATIONS.md`를 참고하세요.
