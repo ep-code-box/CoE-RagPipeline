@@ -30,7 +30,7 @@ LOGGING_CONFIG = {
     "formatters": {
         "default": {
             "()": "uvicorn.logging.DefaultFormatter",
-            "fmt": "% (levelname)s: %(asctime)s - %(name)s - %(message)s",
+            "fmt": "%(levelname)s: %(asctime)s - %(name)s - %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
         "access": {
@@ -39,7 +39,7 @@ LOGGING_CONFIG = {
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
         "detailed": {
-            "fmt": "% (levelname)s: %(asctime)s - %(name)s - %(funcName)s:%(lineno)d - %(message)s",
+            "fmt": "%(levelname)s: %(asctime)s - %(name)s - %(funcName)s:%(lineno)d - %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
@@ -111,12 +111,12 @@ def get_simple_logging_config():
         "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
-            "default": {
-                "format": "% (levelname)s: %(asctime)s - %(name)s - %(message)s",
+        "default": {
+                "format": "%(levelname)s: %(asctime)s - %(name)s - %(message)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
-            "access": {
-                "format": "% (levelname)s: %(asctime)s - %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+        "access": {
+                "format": "%(levelname)s: %(asctime)s - %(client_addr)s - \"%(request_line)s\" %(status_code)s",
                 "datefmt": "%Y-%m-%d %H:%M:%S",
             },
         },

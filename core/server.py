@@ -25,7 +25,7 @@ def run_server():
             reload_excludes=[".*", ".py[cod]", "__pycache__", ".env", ".venv", ".git", "output","gitsync"],  # 감시를 제외할 파일 지정
             log_config=log_config,
             access_log=True,
-            log_level="info"
+            log_level=settings.LOG_LEVEL.lower() if hasattr(settings, "LOG_LEVEL") else "info"
         )
     except RuntimeError as e:
         logger.error(f"Failed to start server: {e}")

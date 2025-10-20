@@ -16,7 +16,7 @@ class Settings:
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = 8001
     RELOAD: bool = True
-    LOG_LEVEL: str = "info"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "info").lower()
     
     # 애플리케이션 루트 경로(프록시 하위 경로에서 서비스할 때 사용)
     # 예: Nginx에서 /rag/로 프록시되는 경우 ROOT_PATH=/rag
