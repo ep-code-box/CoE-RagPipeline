@@ -1,8 +1,21 @@
 import os
+import sys
 import json
 import logging
+import sqlite3
+import types
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+
+# When Python ships with an older libsqlite (<3.35), Chromadb's import guards
+# hard-fail even if we only use the thin HTTP client. Preload a stub module so
+# Chromadb treats this process as a thin client and skips the sqlite version check.
+if sqlite3.sqlite_version_info < (3, 35, 0):
+    module_name = "chromadb.is_thin_client"
+    if module_name not in sys.modules:
+        thin_module = types.ModuleType(module_name)
+        thin_module.is_thin_client = True
+        sys.modules[module_name] = thin_module
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
