@@ -50,6 +50,8 @@ python -m pip download uv -d vendor/wheels
 준비한 `vendor/wheels/*.whl` 파일을 내부망 서버로 복사하면 `run.sh`가 자동으로 감지하여 `--no-index --find-links=vendor/wheels` 옵션으로 설치합니다.
 환경에 따라 다른 디렉터리를 쓰고 싶다면 `WHEEL_DIR=/path/to/wheels ./run.sh`처럼 환경 변수를 지정할 수 있습니다.
 
+> Docker가 사용 가능한 환경이라면 루트 디렉터리에서 `./scripts/download_wheels.sh rag` 를 실행해 Linux/Python3.11용 휠을 자동으로 모을 수 있습니다.
+
 ## 5. 운영 시 DB 마이그레이션
 
 정책과 실행 방법은 `../docs/OPERATIONS.md`를 참고하세요.
