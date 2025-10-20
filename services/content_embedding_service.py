@@ -5,7 +5,10 @@ from typing import Dict, Any, Optional
 from urllib.parse import urlparse
 import hashlib
 
-from langchain.schema import Document
+try:
+    from langchain_core.documents import Document
+except ImportError:  # Fallback for older langchain releases
+    from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from services.embedding_service import get_embedding_service

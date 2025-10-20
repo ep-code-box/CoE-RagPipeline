@@ -7,7 +7,10 @@ from datetime import datetime
 from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-from langchain.schema import Document
+try:
+    from langchain_core.documents import Document
+except ImportError:  # Fallback for older langchain releases
+    from langchain.schema import Document
 
 from models.schemas import AnalysisResult, RepositoryAnalysis, ASTNode
 from config.settings import settings

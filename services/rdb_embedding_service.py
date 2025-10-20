@@ -3,7 +3,10 @@ import logging
 import mysql.connector
 from typing import List, Dict, Any, Optional
 
-from langchain.schema import Document
+try:
+    from langchain_core.documents import Document
+except ImportError:  # Fallback for older langchain releases
+    from langchain.schema import Document
 from services.embedding_service import get_embedding_service
 from config.settings import settings
 
