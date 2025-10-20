@@ -5,12 +5,16 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 try:
     from langchain_core.documents import Document
 except ImportError:  # Fallback for older langchain releases
     from langchain.schema import Document
+
+try:
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+except ImportError:  # Fallback for langchain < 0.3
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from models.schemas import AnalysisResult, RepositoryAnalysis, ASTNode
 from config.settings import settings
