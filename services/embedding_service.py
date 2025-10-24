@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 import types
+import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
@@ -125,6 +126,43 @@ class EmbeddingService:
                 logger.info("LLM reranking disabled by settings (ENABLE_RERANKING=false).")
         except Exception as e:
             logger.warning(f"LLM client init skipped/failed: {e}")
+
+    @staticmethod
+    def _parse_rerank_response(raw_output: str) -> List[Dict[str, Any]]:
+        """
+        Cleans and parses the LLM rerank response into a structured list.
+
+        Removes markdown fences or surrounding text before attempting JSON parsing.
+        """
+        cleaned_output = (raw_output or "").strip()
+        if not cleaned_output:
+            raise ValueError("Empty rerank output from LLM.")
+
+        # Remove leading markdown code fences, e.g. ```json
+        cleaned_output = re.sub(r"^```(?:json)?\s*", "", cleaned_output, flags=re.IGNORECASE)
+        cleaned_output = re.sub(r"\s*```$", "", cleaned_output)
+
+        # Strip leading "json" labels that sometimes precede the payload
+        if cleaned_output.lower().startswith("json"):
+            cleaned_output = cleaned_output[4:].lstrip()
+
+        # Extract the first JSON array segment if extra text is present
+        json_array_match = re.search(r"\[[\s\S]*\]", cleaned_output)
+        if json_array_match:
+            cleaned_output = json_array_match.group(0).strip()
+
+        if not cleaned_output:
+            raise ValueError("Rerank output became empty after cleaning.")
+
+        try:
+            parsed = json.loads(cleaned_output)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Failed to parse rerank output as JSON: {cleaned_output}") from exc
+
+        if not isinstance(parsed, list):
+            raise ValueError("Rerank output is not a JSON array.")
+
+        return parsed
     
     def process_analysis_result(self, analysis_result: AnalysisResult) -> Dict[str, Any]:
         """
@@ -544,7 +582,7 @@ class EmbeddingService:
                     }
                     for doc, score in initial_results
                 ]
-                reranked_results.sort(key=lambda x: x["original_score"], reverse=True)
+                reranked_results.sort(key=lambda x: x["original_score"])
                 return reranked_results[:k]
 
             # LLM에 리랭킹 요청 프롬프트 구성
@@ -564,19 +602,46 @@ class EmbeddingService:
                 
                 # LLM 응답 파싱
                 rerank_output = llm_response.choices[0].message.content
-                rerank_scores_list = json.loads(rerank_output)
+                rerank_scores_list = self._parse_rerank_response(rerank_output)
 
                 # 원본 문서와 리랭크 점수를 결합
                 for item in rerank_scores_list:
-                    original_doc_info = documents_to_rerank[item["index"]]
+                    try:
+                        index_value = int(item.get("index"))  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        continue
+                    if index_value < 0 or index_value >= len(documents_to_rerank):
+                        continue
+                    try:
+                        rerank_score_value = float(item.get("rerank_score"))  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        continue
+                    if rerank_score_value <= 0:
+                        continue
+
+                    original_doc_info = documents_to_rerank[index_value]
                     reranked_results.append({
                         "content": original_doc_info["content"],
                         "metadata": original_doc_info["metadata"],
                         "original_score": original_doc_info["original_score"],
-                        "rerank_score": item["rerank_score"]
+                        "rerank_score": rerank_score_value
                     })
                 
                 # 리랭크 점수를 기준으로 내림차순 정렬하고 상위 k개 선택
+                if not reranked_results:
+                    # LLM output did not yield usable scores; fall back to original similarity ordering
+                    reranked_results = [
+                        {
+                            "content": doc.page_content,
+                            "metadata": doc.metadata,
+                            "original_score": score,
+                            "rerank_score": score
+                        }
+                        for doc, score in initial_results
+                    ]
+                    reranked_results.sort(key=lambda x: x["original_score"])
+                    return reranked_results[:k]
+
                 reranked_results.sort(key=lambda x: x["rerank_score"], reverse=True)
 
             except Exception as llm_e:
@@ -591,7 +656,7 @@ class EmbeddingService:
                     }
                     for doc, score in initial_results
                 ]
-                reranked_results.sort(key=lambda x: x["original_score"], reverse=True)
+                reranked_results.sort(key=lambda x: x["original_score"])
 
             return reranked_results[:k]
             
