@@ -22,6 +22,7 @@ chromadb
 pandas
 openpyxl
 tiktoken
+numpy==1.26.4
 
 # AST 분석을 위한 라이브러리들
 ast-decompiler
